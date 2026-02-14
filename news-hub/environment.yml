@@ -1,0 +1,14 @@
+# Conda Environment Configuration
+# Usage: conda env create -f environment.yml
+# Activate: conda activate news-hub
+
+name: news-hub
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - -r backend/requirements.txt

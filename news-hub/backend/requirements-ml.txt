@@ -1,0 +1,13 @@
+# ============================================
+# News Hub ML Dependencies (向量搜索)
+# 可选 - 如果需要语义搜索再安装
+# ============================================
+
+# === PyTorch (CPU 版本，体积小) ===
+# 使用 CPU 版本避免 CUDA 依赖
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1
+
+# === Sentence Transformers ===
+--index-url https://pypi.org/simple
+sentence-transformers==3.3.1
