@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     media_cache_dir: str = "./cache/media"
     media_cache_max_age_hours: int = 24
 
+    # === LLM / AI Assistant ===
+    openai_api_key: Optional[str] = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
+    openai_timeout: int = 60
+    openai_max_retries: int = 2
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):

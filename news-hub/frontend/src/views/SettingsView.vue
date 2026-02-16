@@ -24,6 +24,7 @@ function handleLogout() {
           <router-link to="/sources" class="nav-link">Sources</router-link>
           <router-link to="/tags" class="nav-link">Tags</router-link>
           <router-link to="/search" class="nav-link">Search</router-link>
+          <router-link to="/assistant" class="nav-link">AI</router-link>
         </nav>
       </div>
       <div class="user-menu">

@@ -19,6 +19,7 @@ from app.api.v1.sources import router as sources_router
 from app.api.v1.news import router as news_router
 from app.api.v1.search import router as search_router
 from app.api.v1.tags import router as tags_router
+from app.api.v1.assistant import router as assistant_router
 from app.services.scheduler import setup_scheduler, shutdown_scheduler
 
 
@@ -115,6 +116,7 @@ app.include_router(sources_router, prefix=settings.api_v1_prefix)
 app.include_router(news_router, prefix=settings.api_v1_prefix)
 app.include_router(search_router, prefix=settings.api_v1_prefix)
 app.include_router(tags_router, prefix=settings.api_v1_prefix)
+app.include_router(assistant_router, prefix=settings.api_v1_prefix)
 
 
 if __name__ == "__main__":

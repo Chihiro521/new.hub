@@ -132,6 +132,7 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
           <router-link to="/" class="nav-link">News</router-link>
           <router-link to="/sources" class="nav-link">Sources</router-link>
           <router-link to="/settings" class="nav-link">Settings</router-link>
+          <router-link to="/assistant" class="nav-link">AI</router-link>
         </nav>
       </div>
       <div class="user-menu">
