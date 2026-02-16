@@ -401,6 +401,7 @@ class CollectionService:
             {
                 "user_id": user_id,
                 "status": {"$in": ["active", "pending"]},
+                "source_type": {"$ne": "virtual"},
             }
         )
         sources = await cursor.to_list(length=100)
@@ -431,6 +432,7 @@ class CollectionService:
             {
                 "$match": {
                     "status": {"$in": ["active", "pending"]},
+                    "source_type": {"$ne": "virtual"},
                 }
             },
             {

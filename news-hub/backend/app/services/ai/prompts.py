@@ -43,3 +43,16 @@ DISCOVER_SOURCES_TEMPLATE = """
 2. type 仅使用 rss、api、html 之一。
 3. 仅输出 JSON 数组，不要输出其他文本。
 """.strip()
+
+SEARCH_SUMMARY_TEMPLATE = """
+请根据以下搜索结果，对查询「{query}」给出一段简洁的中文综合摘要（3-5句话）。
+
+搜索结果：
+{results_text}
+
+要求：
+1. 综合多条结果给出核心信息。
+2. 如果结果之间有矛盾，请指出。
+3. 不要编造搜索结果中未出现的信息。
+4. 仅输出摘要文本。
+""".strip()

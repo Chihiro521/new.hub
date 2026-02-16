@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     openai_timeout: int = 60
     openai_max_retries: int = 2
 
+    # === External Search ===
+    tavily_api_key: Optional[str] = None
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):

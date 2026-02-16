@@ -4,7 +4,7 @@ AI Assistant Schema
 Request and response models for the AI assistant endpoints.
 """
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -84,3 +84,37 @@ class DiscoverSourcesResponseData(BaseModel):
 
     topic: str
     suggestions: List[SourceSuggestion]
+
+
+class AugmentedSearchRequest(BaseModel):
+    """Request for AI-augmented search across internal + external sources."""
+
+    query: str = Field(..., min_length=1, max_length=500, description="Search query")
+    include_external: bool = Field(
+        default=True, description="Include external web search results"
+    )
+    persist_external: bool = Field(
+        default=False, description="Persist external results to user's library"
+    )
+
+
+class SearchResultItem(BaseModel):
+    """A single search result item."""
+
+    title: str = ""
+    url: str = ""
+    description: str = ""
+    source_name: str = ""
+    score: float = 0.0
+    origin: str = Field(default="internal", description="internal or external")
+    news_id: Optional[str] = None
+
+
+class AugmentedSearchResponseData(BaseModel):
+    """Augmented search response data."""
+
+    query: str
+    summary: str = ""
+    results: List[SearchResultItem] = Field(default_factory=list)
+    internal_count: int = 0
+    external_count: int = 0

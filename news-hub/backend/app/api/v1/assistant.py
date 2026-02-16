@@ -1,14 +1,16 @@
 """AI Assistant API routes with streaming chat support."""
 
 import json
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import get_current_user
 from app.db.mongo import mongodb
 from app.schemas.assistant import (
+    AugmentedSearchRequest,
+    AugmentedSearchResponseData,
     ChatRequest,
     ChatResponseData,
     ClassifyRequest,
@@ -18,9 +20,11 @@ from app.schemas.assistant import (
     SummarizeRequest,
     SummarizeResponseData,
 )
-from app.schemas.response import ResponseBase, success_response
+from app.schemas.audit import AuditFeedback, AuditLogResponse
+from app.schemas.response import PaginatedData, ResponseBase, success_response
 from app.schemas.user import UserInDB
 from app.services.ai.assistant_service import AssistantService
+from app.services.ai.audit import AuditLogger
 
 router = APIRouter(prefix="/assistant", tags=["AI Assistant"])
 
@@ -129,5 +133,94 @@ async def discover_sources(
 ):
     """Discover source suggestions for a topic."""
     service = AssistantService()
-    data = await service.discover_sources(topic=request.topic)
+    data = await service.discover_sources(topic=request.topic, user_id=current_user.id)
     return success_response(data=data)
+
+
+@router.post(
+    "/search",
+    response_model=ResponseBase[AugmentedSearchResponseData],
+)
+async def augmented_search(
+    request: AugmentedSearchRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """AI-augmented search combining internal library + external web results."""
+    service = AssistantService()
+    data = await service.augmented_search(
+        query=request.query,
+        user_id=current_user.id,
+        include_external=request.include_external,
+        persist_external=request.persist_external,
+    )
+    return success_response(data=data)
+
+
+# === Audit Log Endpoints ===
+
+
+@router.get(
+    "/audit-logs",
+    response_model=ResponseBase[PaginatedData[AuditLogResponse]],
+)
+async def get_audit_logs(
+    current_user: UserInDB = Depends(get_current_user),
+    action: Optional[str] = Query(None, description="Filter by action type"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """Retrieve paginated AI audit logs for the current user."""
+    logs, total = await AuditLogger.get_logs(
+        user_id=current_user.id,
+        action=action,
+        page=page,
+        page_size=page_size,
+    )
+
+    items = [
+        AuditLogResponse(
+            id=log["_id"],
+            action=log.get("action", ""),
+            input_summary=log.get("input_summary", ""),
+            output_summary=log.get("output_summary", ""),
+            model=log.get("model", ""),
+            latency_ms=log.get("latency_ms", 0),
+            token_usage=log.get("token_usage", {}),
+            quality_signals=log.get("quality_signals", {}),
+            created_at=log["created_at"],
+        )
+        for log in logs
+    ]
+
+    return success_response(
+        data=PaginatedData(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_more=(page * page_size) < total,
+        )
+    )
+
+
+@router.post(
+    "/audit-logs/{log_id}/feedback",
+    response_model=ResponseBase,
+)
+async def submit_audit_feedback(
+    log_id: str,
+    body: AuditFeedback,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Record user feedback (positive/negative) on an AI action."""
+    updated = await AuditLogger.record_feedback(
+        log_id=log_id,
+        user_id=current_user.id,
+        feedback=body.feedback,
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audit log not found",
+        )
+    return success_response(message="Feedback recorded")

@@ -17,6 +17,7 @@ class SourceType(str, Enum):
     RSS = "rss"
     API = "api"
     HTML = "html"  # Web scraping via Scrapy
+    VIRTUAL = "virtual"  # System-managed source for external search results
 
 
 class SourceStatus(str, Enum):
