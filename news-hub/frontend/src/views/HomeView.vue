@@ -24,15 +24,15 @@ function handleLogout() {
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link active">Home</router-link>
-          <router-link to="/sources" class="nav-link">Sources</router-link>
-          <router-link to="/assistant" class="nav-link">AI</router-link>
+          <router-link to="/" class="nav-link active">首页</router-link>
+          <router-link to="/sources" class="nav-link">订阅源</router-link>
+          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
         </nav>
       </div>
       <div class="user-menu">
         <span class="username">{{ authStore.username }}</span>
         <button class="btn-secondary logout-btn" @click="handleLogout">
-          Logout
+          退出
         </button>
       </div>
     </header>
@@ -40,10 +40,10 @@ function handleLogout() {
     <!-- Main content -->
     <main class="main-content">
       <div class="welcome-card card">
-        <h2>Welcome, {{ authStore.username || 'User' }}!</h2>
-        <p>Your personalized news hub is ready.</p>
+        <h2>欢迎，{{ authStore.username || '用户' }}！</h2>
+        <p>你的个人新闻中心已就绪。</p>
         <router-link to="/sources" class="btn-primary action-btn">
-          Manage Sources
+          管理订阅源
         </router-link>
       </div>
     </main>

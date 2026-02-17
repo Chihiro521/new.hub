@@ -70,7 +70,7 @@ async function handleToggleStar(newsId: string, event: Event) {
 }
 
 async function handleMarkAllRead() {
-  if (confirm('Mark all news as read?')) {
+  if (confirm('确认将所有新闻标记为已读？')) {
     await newsStore.markAllAsRead(filterSource.value || undefined)
   }
 }
@@ -87,9 +87,9 @@ function formatDate(dateStr: string | null | undefined): string {
   const diff = now.getTime() - date.getTime()
   const hours = Math.floor(diff / 3600000)
   
-  if (hours < 1) return 'Just now'
-  if (hours < 24) return `${hours}h ago`
-  if (hours < 48) return 'Yesterday'
+  if (hours < 1) return '刚刚'
+  if (hours < 24) return `${hours}小时前`
+  if (hours < 48) return '昨天'
   
   return date.toLocaleDateString('zh-CN', {
     month: 'short',
@@ -116,16 +116,16 @@ const sourceOptions = computed(() => {
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link active">News</router-link>
-          <router-link to="/sources" class="nav-link">Sources</router-link>
-          <router-link to="/search" class="nav-link">Search</router-link>
-          <router-link to="/settings" class="nav-link">Settings</router-link>
-          <router-link to="/assistant" class="nav-link">AI</router-link>
+          <router-link to="/" class="nav-link active">新闻</router-link>
+          <router-link to="/sources" class="nav-link">订阅源</router-link>
+          <router-link to="/search" class="nav-link">搜索</router-link>
+          <router-link to="/settings" class="nav-link">设置</router-link>
+          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
         </nav>
       </div>
       <div class="user-menu">
         <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">Logout</button>
+        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
       </div>
     </header>
 
@@ -136,7 +136,7 @@ const sourceOptions = computed(() => {
         <!-- Sidebar -->
         <aside class="sidebar glass">
           <div class="sidebar-section">
-            <h3>Top Tags</h3>
+            <h3>热门标签</h3>
             <div class="tags-cloud">
               <button
                 v-for="tag in tagStore.topTags"
@@ -156,50 +156,50 @@ const sourceOptions = computed(() => {
         <div class="feed-column">
           <!-- Search Bar -->
           <div class="search-section">
-            <SearchBar placeholder="Search news..." />
+            <SearchBar placeholder="搜索新闻..." />
           </div>
 
           <!-- Stats Bar -->
           <div class="stats-bar glass">
         <div class="stat-item">
           <span class="stat-value">{{ newsStore.stats.total }}</span>
-          <span class="stat-label">Total</span>
+          <span class="stat-label">总计</span>
         </div>
         <div class="stat-item unread">
           <span class="stat-value">{{ newsStore.stats.unread }}</span>
-          <span class="stat-label">Unread</span>
+          <span class="stat-label">未读</span>
         </div>
         <div class="stat-item starred">
           <span class="stat-value">{{ newsStore.stats.starred }}</span>
-          <span class="stat-label">Starred</span>
+          <span class="stat-label">收藏</span>
         </div>
-        <button class="btn-sm" @click="handleMarkAllRead">Mark All Read</button>
+        <button class="btn-sm" @click="handleMarkAllRead">全部已读</button>
       </div>
 
       <!-- Filters -->
       <div class="filters card">
         <div class="filter-group">
-          <label>Source</label>
+          <label>订阅源</label>
           <select v-model="filterSource" @change="applyFilters" class="input">
-            <option value="">All Sources</option>
+            <option value="">全部来源</option>
             <option v-for="source in sourceOptions" :key="source.id" :value="source.id">
               {{ source.name }}
             </option>
           </select>
         </div>
         <div class="filter-group">
-          <label>Status</label>
+          <label>状态</label>
           <select v-model="filterUnread" @change="applyFilters" class="input">
-            <option :value="null">All</option>
-            <option :value="true">Unread Only</option>
-            <option :value="false">Read Only</option>
+            <option :value="null">全部</option>
+            <option :value="true">仅未读</option>
+            <option :value="false">仅已读</option>
           </select>
         </div>
         <div class="filter-group">
-          <label>Starred</label>
+          <label>收藏</label>
           <select v-model="filterStarred" @change="applyFilters" class="input">
-            <option :value="null">All</option>
-            <option :value="true">Starred Only</option>
+            <option :value="null">全部</option>
+            <option :value="true">仅收藏</option>
           </select>
         </div>
       </div>
@@ -212,15 +212,15 @@ const sourceOptions = computed(() => {
       <!-- Error -->
       <div v-else-if="newsStore.error" class="error-message card">
         {{ newsStore.error }}
-        <button @click="newsStore.clearError">Dismiss</button>
+        <button @click="newsStore.clearError">关闭</button>
       </div>
 
       <!-- Empty state -->
       <div v-else-if="newsStore.newsList.length === 0" class="empty-state card">
         <div class="empty-icon">📰</div>
-        <h3>No news yet</h3>
-        <p>Add some sources and refresh them to start collecting news.</p>
-        <router-link to="/sources" class="btn-primary">Manage Sources</router-link>
+        <h3>暂无新闻</h3>
+        <p>添加一些订阅源并刷新，即可开始收集新闻。</p>
+        <router-link to="/sources" class="btn-primary">管理订阅源</router-link>
       </div>
 
           <!-- News list -->
@@ -273,7 +273,7 @@ const sourceOptions = computed(() => {
                 :disabled="isLoadingMore"
                 @click="loadMore"
               >
-                {{ isLoadingMore ? 'Loading...' : 'Load More' }}
+                {{ isLoadingMore ? '加载中...' : '加载更多' }}
               </button>
             </div>
           </div>

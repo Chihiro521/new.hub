@@ -37,7 +37,7 @@ function goToRegister() {
     <div class="auth-card glass-strong">
       <div class="auth-header">
         <h1 class="gradient-text">News Hub</h1>
-        <p class="subtitle">Welcome back</p>
+        <p class="subtitle">欢迎回来</p>
       </div>
 
       <form class="auth-form" @submit.prevent="handleLogin">
@@ -49,13 +49,13 @@ function goToRegister() {
 
         <!-- Username -->
         <div class="form-group">
-          <label for="username">Username or Email</label>
+          <label for="username">用户名或邮箱</label>
           <input
             id="username"
             v-model="username"
             type="text"
             class="input"
-            placeholder="Enter username or email"
+            placeholder="请输入用户名或邮箱"
             required
             autocomplete="username"
           />
@@ -63,14 +63,14 @@ function goToRegister() {
 
         <!-- Password -->
         <div class="form-group">
-          <label for="password">Password</label>
+          <label for="password">密码</label>
           <div class="password-wrapper">
             <input
               id="password"
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
               class="input"
-              placeholder="Enter password"
+              placeholder="请输入密码"
               required
               autocomplete="current-password"
             />
@@ -79,7 +79,7 @@ function goToRegister() {
               class="password-toggle"
               @click="showPassword = !showPassword"
             >
-              {{ showPassword ? 'Hide' : 'Show' }}
+              {{ showPassword ? '隐藏' : '显示' }}
             </button>
           </div>
         </div>
@@ -90,17 +90,17 @@ function goToRegister() {
           class="btn-primary submit-btn"
           :disabled="authStore.loading"
         >
-          <span v-if="authStore.loading">Signing in...</span>
-          <span v-else>Sign In</span>
+          <span v-if="authStore.loading">登录中...</span>
+          <span v-else>登录</span>
         </button>
       </form>
 
       <!-- Footer -->
       <div class="auth-footer">
         <p>
-          Don't have an account?
+          还没有账号？
           <button type="button" class="link-btn" @click="goToRegister">
-            Sign up
+            注册
           </button>
         </p>
       </div>

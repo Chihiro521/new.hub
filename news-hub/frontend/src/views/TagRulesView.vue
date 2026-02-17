@@ -90,7 +90,7 @@ async function handleSubmit() {
 }
 
 async function handleDelete(rule: TagRuleResponse) {
-  if (confirm(`Delete rule "${rule.tag_name}"?`)) {
+  if (confirm(`确认删除规则"${rule.tag_name}"？`)) {
     await tagStore.deleteRule(rule.id)
     tagStore.fetchStats()
   }
@@ -137,29 +137,29 @@ function useExtractedKeyword(kw: string) {
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link">Home</router-link>
-          <router-link to="/sources" class="nav-link">Sources</router-link>
-          <router-link to="/tags" class="nav-link active">Tags</router-link>
-          <router-link to="/search" class="nav-link">Search</router-link>
-          <router-link to="/settings" class="nav-link">Settings</router-link>
-          <router-link to="/assistant" class="nav-link">AI</router-link>
+          <router-link to="/" class="nav-link">首页</router-link>
+          <router-link to="/sources" class="nav-link">订阅源</router-link>
+          <router-link to="/tags" class="nav-link active">标签</router-link>
+          <router-link to="/search" class="nav-link">搜索</router-link>
+          <router-link to="/settings" class="nav-link">设置</router-link>
+          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
         </nav>
       </div>
       <div class="user-menu">
         <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">Logout</button>
+        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
       </div>
     </header>
 
     <main class="main-content">
       <div class="page-header">
         <div>
-          <h2>Tag Rules</h2>
-          <p class="subtitle">Manage auto-tagging rules for your news feed</p>
+          <h2>标签规则</h2>
+          <p class="subtitle">管理新闻自动打标签的规则</p>
         </div>
         <div class="header-actions">
-          <button class="btn-secondary" @click="showTestModal = true">Test Extraction</button>
-          <button class="btn-primary" @click="openCreateModal">+ Create Rule</button>
+          <button class="btn-secondary" @click="showTestModal = true">测试提取</button>
+          <button class="btn-primary" @click="openCreateModal">+ 创建规则</button>
         </div>
       </div>
 
@@ -167,28 +167,28 @@ function useExtractedKeyword(kw: string) {
       <div class="stats-grid" v-if="tagStore.stats">
         <div class="stat-card glass">
           <div class="stat-value">{{ tagStore.stats.rules_count }}</div>
-          <div class="stat-label">Active Rules</div>
+          <div class="stat-label">活跃规则</div>
         </div>
         <div class="stat-card glass">
           <div class="stat-value">{{ tagStore.stats.unique_tags }}</div>
-          <div class="stat-label">Unique Tags</div>
+          <div class="stat-label">独立标签</div>
         </div>
         <div class="stat-card glass">
           <div class="stat-value">{{ tagStore.stats.total_tagged_items }}</div>
-          <div class="stat-label">Tagged Articles</div>
+          <div class="stat-label">已标记文章</div>
         </div>
       </div>
 
       <!-- Rules List -->
       <div class="rules-list">
         <div v-if="tagStore.loading && tagStore.rules.length === 0" class="loading">
-          Loading rules...
+          加载规则中...
         </div>
         
         <div v-else-if="tagStore.rules.length === 0" class="empty-state glass">
-          <h3>No Tag Rules</h3>
-          <p>Create rules to automatically categorize your news.</p>
-          <button class="btn-primary" @click="openCreateModal">Create First Rule</button>
+          <h3>暂无标签规则</h3>
+          <p>创建规则来自动分类你的新闻。</p>
+          <button class="btn-primary" @click="openCreateModal">创建第一条规则</button>
         </div>
 
         <div v-else v-for="rule in sortedRules" :key="rule.id" class="rule-card glass" :class="{ inactive: !rule.is_active }">
@@ -208,17 +208,17 @@ function useExtractedKeyword(kw: string) {
           </div>
 
           <div class="rule-keywords">
-            <span class="keyword-label">Keywords ({{ rule.match_mode }}):</span>
+            <span class="keyword-label">关键词 ({{ rule.match_mode === 'any' ? '任意匹配' : '全部匹配' }}):</span>
             <div class="keyword-chips">
               <span v-for="kw in rule.keywords" :key="kw" class="chip">{{ kw }}</span>
             </div>
           </div>
 
           <div class="rule-meta">
-            <span>Matches: {{ rule.match_count }}</span>
-            <span v-if="rule.match_title">Title</span>
-            <span v-if="rule.match_description">Desc</span>
-            <span v-if="rule.match_content">Content</span>
+            <span>匹配: {{ rule.match_count }}</span>
+            <span v-if="rule.match_title">标题</span>
+            <span v-if="rule.match_description">描述</span>
+            <span v-if="rule.match_content">正文</span>
           </div>
         </div>
       </div>
@@ -227,15 +227,15 @@ function useExtractedKeyword(kw: string) {
     <!-- Create/Edit Modal -->
     <div v-if="showModal" class="modal-backdrop" @click.self="showModal = false">
       <div class="modal glass-strong">
-        <h3>{{ isEditing ? 'Edit Rule' : 'Create Tag Rule' }}</h3>
+        <h3>{{ isEditing ? '编辑规则' : '创建标签规则' }}</h3>
         
         <div class="form-group">
-          <label>Tag Name</label>
-          <input v-model="formData.tag_name" class="input" placeholder="e.g., Technology" autofocus>
+          <label>标签名称</label>
+          <input v-model="formData.tag_name" class="input" placeholder="例如：科技" autofocus>
         </div>
 
         <div class="form-group">
-          <label>Keywords (Press Enter)</label>
+          <label>关键词（按回车添加）</label>
           <div class="keywords-input-container input">
             <span v-for="(kw, idx) in formData.keywords" :key="idx" class="chip removable">
               {{ kw }}
@@ -245,7 +245,7 @@ function useExtractedKeyword(kw: string) {
               v-model="keywordInput" 
               @keydown.enter.prevent="addKeyword"
               @keydown.backspace="keywordInput === '' && formData.keywords.length && removeKeyword(formData.keywords.length - 1)"
-              placeholder="Add keyword..."
+              placeholder="添加关键词..."
               class="transparent-input"
             >
           </div>
@@ -253,28 +253,28 @@ function useExtractedKeyword(kw: string) {
 
         <div class="form-row">
           <div class="form-group">
-            <label>Match Mode</label>
+            <label>匹配模式</label>
             <select v-model="formData.match_mode" class="input">
-              <option value="any">Any Keyword</option>
-              <option value="all">All Keywords</option>
+              <option value="any">任意关键词</option>
+              <option value="all">全部关键词</option>
             </select>
           </div>
           <div class="form-group">
-            <label>Priority</label>
+            <label>优先级</label>
             <input type="number" v-model="formData.priority" class="input" min="0" max="100">
           </div>
         </div>
 
         <div class="form-group checkbox-group">
-          <label><input type="checkbox" v-model="formData.match_title"> Title</label>
-          <label><input type="checkbox" v-model="formData.match_description"> Description</label>
-          <label><input type="checkbox" v-model="formData.match_content"> Content</label>
-          <label><input type="checkbox" v-model="formData.case_sensitive"> Case Sensitive</label>
+          <label><input type="checkbox" v-model="formData.match_title"> 标题</label>
+          <label><input type="checkbox" v-model="formData.match_description"> 描述</label>
+          <label><input type="checkbox" v-model="formData.match_content"> 正文</label>
+          <label><input type="checkbox" v-model="formData.case_sensitive"> 区分大小写</label>
         </div>
 
         <div class="modal-actions">
-          <button class="btn-secondary" @click="showModal = false">Cancel</button>
-          <button class="btn-primary" @click="handleSubmit">Save Rule</button>
+          <button class="btn-secondary" @click="showModal = false">取消</button>
+          <button class="btn-primary" @click="handleSubmit">保存规则</button>
         </div>
       </div>
     </div>
@@ -282,25 +282,25 @@ function useExtractedKeyword(kw: string) {
     <!-- Test Modal -->
     <div v-if="showTestModal" class="modal-backdrop" @click.self="showTestModal = false">
       <div class="modal glass-strong">
-        <h3>Test Keyword Extraction</h3>
-        <p class="modal-subtitle">Paste text to see what keywords Jieba extracts.</p>
-        
-        <textarea v-model="testText" class="input textarea" placeholder="Paste article text here..." rows="6"></textarea>
+        <h3>测试关键词提取</h3>
+        <p class="modal-subtitle">粘贴文本，查看结巴分词提取的关键词。</p>
+
+        <textarea v-model="testText" class="input textarea" placeholder="在此粘贴文章文本..." rows="6"></textarea>
         
         <div class="test-results" v-if="testResult.length > 0">
-          <h4>Extracted Keywords:</h4>
+          <h4>提取的关键词：</h4>
           <div class="keyword-chips">
             <span v-for="kw in testResult" :key="kw" class="chip clickable" @click="useExtractedKeyword(kw)">
               {{ kw }}
             </span>
           </div>
-          <p class="hint">Click a keyword to add it to your current rule (if open).</p>
+          <p class="hint">点击关键词可将其添加到当前规则中（如已打开）。</p>
         </div>
 
         <div class="modal-actions">
-          <button class="btn-secondary" @click="showTestModal = false">Close</button>
+          <button class="btn-secondary" @click="showTestModal = false">关闭</button>
           <button class="btn-primary" @click="runTest" :disabled="isTesting">
-            {{ isTesting ? 'Extracting...' : 'Extract Keywords' }}
+            {{ isTesting ? '提取中...' : '提取关键词' }}
           </button>
         </div>
       </div>

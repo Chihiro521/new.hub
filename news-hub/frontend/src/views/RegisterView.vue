@@ -18,13 +18,13 @@ async function handleRegister() {
   
   // Validate password match
   if (password.value !== confirmPassword.value) {
-    localError.value = 'Passwords do not match'
+    localError.value = '两次输入的密码不一致'
     return
   }
 
   // Validate password length
   if (password.value.length < 6) {
-    localError.value = 'Password must be at least 6 characters'
+    localError.value = '密码至少需要6个字符'
     return
   }
 
@@ -52,7 +52,7 @@ function goToLogin() {
     <div class="auth-card glass-strong">
       <div class="auth-header">
         <h1 class="gradient-text">News Hub</h1>
-        <p class="subtitle">Create your account</p>
+        <p class="subtitle">创建你的账号</p>
       </div>
 
       <form class="auth-form" @submit.prevent="handleRegister">
@@ -64,31 +64,31 @@ function goToLogin() {
 
         <!-- Username -->
         <div class="form-group">
-          <label for="username">Username</label>
+          <label for="username">用户名</label>
           <input
             id="username"
             v-model="username"
             type="text"
             class="input"
-            placeholder="Choose a username"
+            placeholder="请选择一个用户名"
             required
             autocomplete="username"
             minlength="3"
             maxlength="32"
             pattern="[a-zA-Z0-9_]+"
           />
-          <span class="hint">3-32 characters, letters, numbers, underscore</span>
+          <span class="hint">3-32个字符，支持字母、数字、下划线</span>
         </div>
 
         <!-- Email -->
         <div class="form-group">
-          <label for="email">Email</label>
+          <label for="email">邮箱</label>
           <input
             id="email"
             v-model="email"
             type="email"
             class="input"
-            placeholder="Enter your email"
+            placeholder="请输入邮箱"
             required
             autocomplete="email"
           />
@@ -96,14 +96,14 @@ function goToLogin() {
 
         <!-- Password -->
         <div class="form-group">
-          <label for="password">Password</label>
+          <label for="password">密码</label>
           <div class="password-wrapper">
             <input
               id="password"
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
               class="input"
-              placeholder="Create a password"
+              placeholder="请创建密码"
               required
               autocomplete="new-password"
               minlength="6"
@@ -113,21 +113,21 @@ function goToLogin() {
               class="password-toggle"
               @click="showPassword = !showPassword"
             >
-              {{ showPassword ? 'Hide' : 'Show' }}
+              {{ showPassword ? '隐藏' : '显示' }}
             </button>
           </div>
-          <span class="hint">At least 6 characters</span>
+          <span class="hint">至少6个字符</span>
         </div>
 
         <!-- Confirm Password -->
         <div class="form-group">
-          <label for="confirmPassword">Confirm Password</label>
+          <label for="confirmPassword">确认密码</label>
           <input
             id="confirmPassword"
             v-model="confirmPassword"
             :type="showPassword ? 'text' : 'password'"
             class="input"
-            placeholder="Confirm your password"
+            placeholder="请再次输入密码"
             required
             autocomplete="new-password"
           />
@@ -139,17 +139,17 @@ function goToLogin() {
           class="btn-primary submit-btn"
           :disabled="authStore.loading"
         >
-          <span v-if="authStore.loading">Creating account...</span>
-          <span v-else>Create Account</span>
+          <span v-if="authStore.loading">创建中...</span>
+          <span v-else>创建账号</span>
         </button>
       </form>
 
       <!-- Footer -->
       <div class="auth-footer">
         <p>
-          Already have an account?
+          已有账号？
           <button type="button" class="link-btn" @click="goToLogin">
-            Sign in
+            登录
           </button>
         </p>
       </div>

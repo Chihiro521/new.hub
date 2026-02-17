@@ -51,7 +51,7 @@ async function handleDetect() {
 
     step.value = 'config'
   } catch (e) {
-    detectError.value = e instanceof Error ? e.message : 'Detection failed'
+    detectError.value = e instanceof Error ? e.message : '检测失败'
   } finally {
     detecting.value = false
   }
@@ -81,16 +81,16 @@ function handleBack() {
 
 function getTypeLabel(type: SourceType): string {
   switch (type) {
-    case 'rss': return 'RSS Feed'
+    case 'rss': return 'RSS 订阅'
     case 'api': return 'JSON API'
-    case 'html': return 'HTML Scraping'
+    case 'html': return 'HTML 抓取'
   }
 }
 
 function getConfidenceLabel(confidence: number): string {
-  if (confidence >= 0.8) return 'High'
-  if (confidence >= 0.5) return 'Medium'
-  return 'Low'
+  if (confidence >= 0.8) return '高'
+  if (confidence >= 0.5) return '中'
+  return '低'
 }
 </script>
 
@@ -98,18 +98,18 @@ function getConfidenceLabel(confidence: number): string {
   <div class="modal-overlay" @click.self="$emit('close')">
     <div class="modal glass-strong">
       <div class="modal-header">
-        <h2>Add News Source</h2>
+        <h2>添加新闻订阅源</h2>
         <button class="close-btn" @click="$emit('close')">x</button>
       </div>
 
       <!-- Step 1: URL Input -->
       <div v-if="step === 'url'" class="modal-body">
         <p class="step-description">
-          Enter the URL of a news source. We'll automatically detect its type and configuration.
+          输入新闻源的 URL，我们会自动检测其类型和配置。
         </p>
 
         <div class="form-group">
-          <label for="url">Source URL</label>
+          <label for="url">订阅源 URL</label>
           <input
             id="url"
             v-model="url"
@@ -118,7 +118,7 @@ function getConfidenceLabel(confidence: number): string {
             placeholder="https://example.com/feed.xml"
             @keyup.enter="handleDetect"
           />
-          <span class="hint">RSS feed, API endpoint, or news page URL</span>
+          <span class="hint">RSS 订阅、API 接口或新闻页面 URL</span>
         </div>
 
         <div v-if="detectError" class="error-message">
@@ -126,14 +126,14 @@ function getConfidenceLabel(confidence: number): string {
         </div>
 
         <div class="modal-actions">
-          <button class="btn-secondary" @click="$emit('close')">Cancel</button>
+          <button class="btn-secondary" @click="$emit('close')">取消</button>
           <button
             class="btn-primary"
             :disabled="!isValidUrl || detecting"
             @click="handleDetect"
           >
-            <span v-if="detecting">Detecting...</span>
-            <span v-else>Detect Source</span>
+            <span v-if="detecting">检测中...</span>
+            <span v-else>检测订阅源</span>
           </button>
         </div>
       </div>
@@ -146,74 +146,74 @@ function getConfidenceLabel(confidence: number): string {
             {{ getTypeLabel(detectResult.detected_type) }}
           </div>
           <span class="confidence">
-            Confidence: {{ getConfidenceLabel(detectResult.confidence) }}
+            置信度: {{ getConfidenceLabel(detectResult.confidence) }}
             ({{ Math.round(detectResult.confidence * 100) }}%)
           </span>
         </div>
 
         <!-- Preview items -->
         <div v-if="detectResult?.preview_items?.length" class="preview-section">
-          <h4>Preview</h4>
+          <h4>预览</h4>
           <div class="preview-list">
             <div v-for="(item, i) in detectResult.preview_items.slice(0, 3)" :key="i" class="preview-item">
-              <span class="preview-title">{{ item.title || 'Untitled' }}</span>
+              <span class="preview-title">{{ item.title || '无标题' }}</span>
             </div>
           </div>
         </div>
 
         <div class="form-group">
-          <label for="name">Source Name</label>
+          <label for="name">订阅源名称</label>
           <input
             id="name"
             v-model="name"
             type="text"
             class="input"
-            placeholder="My News Source"
+            placeholder="我的新闻源"
             required
           />
         </div>
 
         <div class="form-group">
-          <label for="type">Source Type</label>
+          <label for="type">订阅源类型</label>
           <select id="type" v-model="sourceType" class="input">
-            <option value="rss">RSS Feed</option>
+            <option value="rss">RSS 订阅</option>
             <option value="api">JSON API</option>
-            <option value="html">HTML Scraping</option>
+            <option value="html">HTML 抓取</option>
           </select>
         </div>
 
         <div class="form-group">
-          <label for="description">Description (optional)</label>
+          <label for="description">描述（可选）</label>
           <input
             id="description"
             v-model="description"
             type="text"
             class="input"
-            placeholder="Brief description"
+            placeholder="简要描述"
           />
         </div>
 
         <div class="form-row">
           <div class="form-group">
-            <label for="tags">Tags (comma-separated)</label>
+            <label for="tags">标签（逗号分隔）</label>
             <input
               id="tags"
               v-model="tags"
               type="text"
               class="input"
-              placeholder="tech, news, china"
+              placeholder="科技, 新闻, 中国"
             />
           </div>
 
           <div class="form-group">
-            <label for="refresh">Refresh Interval</label>
+            <label for="refresh">刷新间隔</label>
             <select id="refresh" v-model="refreshInterval" class="input">
-              <option :value="5">5 minutes</option>
-              <option :value="15">15 minutes</option>
-              <option :value="30">30 minutes</option>
-              <option :value="60">1 hour</option>
-              <option :value="360">6 hours</option>
-              <option :value="1440">24 hours</option>
+              <option :value="5">5 分钟</option>
+              <option :value="15">15 分钟</option>
+              <option :value="30">30 分钟</option>
+              <option :value="60">1 小时</option>
+              <option :value="360">6 小时</option>
+              <option :value="1440">24 小时</option>
             </select>
           </div>
         </div>
@@ -223,14 +223,14 @@ function getConfidenceLabel(confidence: number): string {
         </div>
 
         <div class="modal-actions">
-          <button class="btn-secondary" @click="handleBack">Back</button>
+          <button class="btn-secondary" @click="handleBack">返回</button>
           <button
             class="btn-primary"
             :disabled="!name || sourceStore.loading"
             @click="handleCreate"
           >
-            <span v-if="sourceStore.loading">Creating...</span>
-            <span v-else>Create Source</span>
+            <span v-if="sourceStore.loading">创建中...</span>
+            <span v-else>创建订阅源</span>
           </button>
         </div>
       </div>

@@ -69,7 +69,7 @@ async function performSearch() {
       error.value = result.message
     }
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Search failed'
+    error.value = err instanceof Error ? err.message : '搜索失败'
   } finally {
     isLoading.value = false
   }
@@ -129,15 +129,15 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link">News</router-link>
-          <router-link to="/sources" class="nav-link">Sources</router-link>
-          <router-link to="/settings" class="nav-link">Settings</router-link>
-          <router-link to="/assistant" class="nav-link">AI</router-link>
+          <router-link to="/" class="nav-link">新闻</router-link>
+          <router-link to="/sources" class="nav-link">订阅源</router-link>
+          <router-link to="/settings" class="nav-link">设置</router-link>
+          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
         </nav>
       </div>
       <div class="user-menu">
         <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">Logout</button>
+        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
       </div>
     </header>
 
@@ -145,21 +145,21 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
     <main class="main-content">
       <!-- Search Box -->
       <div class="search-section">
-        <h2 class="search-title">Search News</h2>
+        <h2 class="search-title">搜索新闻</h2>
         <SearchBar
           v-model="searchQuery"
-          placeholder="Search articles..."
+          placeholder="搜索文章..."
           @search="handleSearch"
         />
         
         <!-- Search Type Toggle -->
         <div class="search-options">
           <div class="option-group">
-            <label>Search Mode:</label>
+            <label>搜索模式：</label>
             <select v-model="searchType" @change="handleSearchTypeChange" class="input">
-              <option value="hybrid">Hybrid (Recommended)</option>
-              <option value="keyword">Keyword Only</option>
-              <option value="semantic">Semantic Only</option>
+              <option value="hybrid">混合搜索（推荐）</option>
+              <option value="keyword">仅关键词</option>
+              <option value="semantic">仅语义</option>
             </select>
           </div>
         </div>
@@ -168,24 +168,24 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
       <!-- Results Info -->
       <div v-if="totalResults > 0 || searchQuery" class="results-info">
         <span v-if="totalResults > 0">
-          Found <strong>{{ totalResults }}</strong> results
+          找到 <strong>{{ totalResults }}</strong> 条结果
           <span class="took-time">({{ searchTook }}ms)</span>
         </span>
         <span v-else-if="!isLoading && searchQuery">
-          No results found for "{{ searchQuery }}"
+          未找到"{{ searchQuery }}"的相关结果
         </span>
       </div>
 
       <!-- Loading -->
       <div v-if="isLoading && results.length === 0" class="loading">
         <div class="spinner"></div>
-        <span>Searching...</span>
+        <span>搜索中...</span>
       </div>
 
       <!-- Error -->
       <div v-else-if="error" class="error-message card">
         {{ error }}
-        <button @click="error = null">Dismiss</button>
+        <button @click="error = null">关闭</button>
       </div>
 
       <!-- Results -->
@@ -203,7 +203,7 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
             <div class="result-header">
               <span class="result-source">{{ item.source_name }}</span>
               <span class="result-date">{{ formatDate(item.published_at) }}</span>
-              <span class="result-score">Score: {{ item.score.toFixed(2) }}</span>
+              <span class="result-score">评分: {{ item.score.toFixed(2) }}</span>
             </div>
             <h3 
               class="result-title"
@@ -227,7 +227,7 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
             :disabled="isLoading"
             @click="loadMore"
           >
-            {{ isLoading ? 'Loading...' : 'Load More' }}
+            {{ isLoading ? '加载中...' : '加载更多' }}
           </button>
         </div>
       </div>
@@ -235,14 +235,14 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
       <!-- Empty state (no query) -->
       <div v-else-if="!searchQuery" class="empty-state">
         <div class="empty-icon">🔍</div>
-        <h3>Start Searching</h3>
-        <p>Enter a keyword or phrase to find news articles.</p>
+        <h3>开始搜索</h3>
+        <p>输入关键词或短语来查找新闻文章。</p>
         <div class="search-tips">
-          <p><strong>Tips:</strong></p>
+          <p><strong>提示：</strong></p>
           <ul>
-            <li>Use <strong>Hybrid</strong> mode for best results</li>
-            <li><strong>Semantic</strong> search understands meaning, not just keywords</li>
-            <li>Try natural language queries like "新能源汽车发展趋势"</li>
+            <li>使用<strong>混合搜索</strong>模式获得最佳结果</li>
+            <li><strong>语义搜索</strong>能理解语义，不仅仅是关键词匹配</li>
+            <li>试试自然语言查询，如"新能源汽车发展趋势"</li>
           </ul>
         </div>
       </div>

@@ -65,15 +65,15 @@ function usePrompt(prompt: string) {
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link">Home</router-link>
-          <router-link to="/sources" class="nav-link">Sources</router-link>
-          <router-link to="/search" class="nav-link">Search</router-link>
-          <router-link to="/assistant" class="nav-link active">AI</router-link>
+          <router-link to="/" class="nav-link">首页</router-link>
+          <router-link to="/sources" class="nav-link">订阅源</router-link>
+          <router-link to="/search" class="nav-link">搜索</router-link>
+          <router-link to="/assistant" class="nav-link active">AI 助手</router-link>
         </nav>
       </div>
       <div class="user-menu">
         <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">Logout</button>
+        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
       </div>
     </header>
 

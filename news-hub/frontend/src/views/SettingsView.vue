@@ -20,30 +20,30 @@ function handleLogout() {
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link">Home</router-link>
-          <router-link to="/sources" class="nav-link">Sources</router-link>
-          <router-link to="/tags" class="nav-link">Tags</router-link>
-          <router-link to="/search" class="nav-link">Search</router-link>
-          <router-link to="/assistant" class="nav-link">AI</router-link>
+          <router-link to="/" class="nav-link">首页</router-link>
+          <router-link to="/sources" class="nav-link">订阅源</router-link>
+          <router-link to="/tags" class="nav-link">标签</router-link>
+          <router-link to="/search" class="nav-link">搜索</router-link>
+          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
         </nav>
       </div>
       <div class="user-menu">
         <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">Logout</button>
+        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
       </div>
     </header>
 
     <main class="main-content">
       <div class="page-header">
-        <h2>Settings</h2>
-        <p class="subtitle">Customize your experience</p>
+        <h2>设置</h2>
+        <p class="subtitle">自定义你的使用体验</p>
       </div>
 
       <div class="settings-grid">
         <!-- Theme Section -->
         <section class="card glass">
-          <h3>Theme Mode</h3>
-          <p class="section-desc">Choose your preferred appearance.</p>
+          <h3>主题模式</h3>
+          <p class="section-desc">选择你偏好的外观。</p>
           
           <div class="options-group">
             <button 
@@ -51,29 +51,29 @@ function handleLogout() {
               :class="{ active: themeStore.themeMode === 'light' }"
               @click="themeStore.setTheme('light')"
             >
-              🌞 Light
+              🌞 浅色
             </button>
-            <button 
-              class="option-btn" 
+            <button
+              class="option-btn"
               :class="{ active: themeStore.themeMode === 'dark' }"
               @click="themeStore.setTheme('dark')"
             >
-              🌙 Dark
+              🌙 深色
             </button>
-            <button 
-              class="option-btn" 
+            <button
+              class="option-btn"
               :class="{ active: themeStore.themeMode === 'auto' }"
               @click="themeStore.setTheme('auto')"
             >
-              🤖 Auto
+              🤖 自动
             </button>
           </div>
         </section>
 
         <!-- Wallpaper Section -->
         <section class="card glass">
-          <h3>Wallpaper</h3>
-          <p class="section-desc">Enable animated background effects.</p>
+          <h3>壁纸</h3>
+          <p class="section-desc">启用动态背景效果。</p>
           
           <div class="options-group">
             <button 
@@ -81,21 +81,21 @@ function handleLogout() {
               :class="{ active: themeStore.wallpaperMode === 'dynamic' }"
               @click="themeStore.setWallpaper('dynamic')"
             >
-              ✨ Dynamic
+              ✨ 动态
             </button>
-            <button 
-              class="option-btn" 
+            <button
+              class="option-btn"
               :class="{ active: themeStore.wallpaperMode === 'static' }"
               @click="themeStore.setWallpaper('static')"
             >
-              🖼️ Static
+              🖼️ 静态
             </button>
-            <button 
-              class="option-btn" 
+            <button
+              class="option-btn"
               :class="{ active: themeStore.wallpaperMode === 'disabled' }"
               @click="themeStore.setWallpaper('disabled')"
             >
-              🚫 Disabled
+              🚫 关闭
             </button>
           </div>
         </section>

@@ -130,7 +130,7 @@ function handleBlur() {
         v-model="query"
         type="text"
         class="search-input"
-        :placeholder="placeholder || 'Search news...'"
+        :placeholder="placeholder || '搜索新闻...'"
         @keydown="handleKeydown"
         @focus="handleFocus"
         @blur="handleBlur"
@@ -145,7 +145,7 @@ function handleBlur() {
         ✕
       </button>
       <button type="submit" class="search-btn" :disabled="!query.trim()">
-        Search
+        搜索
       </button>
     </form>
 

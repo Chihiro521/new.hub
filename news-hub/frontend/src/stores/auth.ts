@@ -27,7 +27,7 @@ export const useAuthStore = defineStore('auth', () => {
       await fetchUser()
       return true
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Login failed'
+      error.value = e instanceof Error ? e.message : '登录失败'
       return false
     } finally {
       loading.value = false
@@ -43,7 +43,7 @@ export const useAuthStore = defineStore('auth', () => {
       // Auto login after registration
       return await login(username, password)
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Registration failed'
+      error.value = e instanceof Error ? e.message : '注册失败'
       return false
     } finally {
       loading.value = false

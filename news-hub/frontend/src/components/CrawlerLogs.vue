@@ -59,10 +59,10 @@ onUnmounted(() => {
 <template>
   <div class="crawler-logs card glass">
     <div class="logs-header">
-      <h3>Crawler Logs (Live)</h3>
+      <h3>采集日志（实时）</h3>
       <div class="status-indicator" :class="{ active: isRunning }">
         <span class="dot"></span>
-        {{ isRunning ? 'Running' : 'Paused' }}
+        {{ isRunning ? '运行中' : '已暂停' }}
       </div>
     </div>
     

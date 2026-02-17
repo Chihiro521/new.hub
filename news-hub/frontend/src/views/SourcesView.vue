@@ -36,10 +36,10 @@ function getStatusColor(status: SourceStatus): string {
 
 function getStatusLabel(status: SourceStatus): string {
   switch (status) {
-    case 'active': return 'Active'
-    case 'paused': return 'Paused'
-    case 'error': return 'Error'
-    case 'pending': return 'Pending'
+    case 'active': return '活跃'
+    case 'paused': return '暂停'
+    case 'error': return '错误'
+    case 'pending': return '等待中'
     default: return status
   }
 }
@@ -54,7 +54,7 @@ function getTypeLabel(type: string): string {
 }
 
 function formatDate(dateStr: string | null): string {
-  if (!dateStr) return 'Never'
+  if (!dateStr) return '从未'
   const date = new Date(dateStr)
   return date.toLocaleDateString('zh-CN', {
     month: 'short',
@@ -69,7 +69,7 @@ async function handleRefresh(source: SourceResponse) {
 }
 
 async function handleDelete(source: SourceResponse) {
-  if (confirm(`Delete "${source.name}"? This will also delete all collected news.`)) {
+  if (confirm(`确认删除"${source.name}"？这将同时删除所有已采集的新闻。`)) {
     await sourceStore.deleteSource(source.id)
   }
 }
@@ -100,16 +100,16 @@ function handleSourceAdded() {
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link">Home</router-link>
-          <router-link to="/sources" class="nav-link active">Sources</router-link>
-          <router-link to="/search" class="nav-link">Search</router-link>
-          <router-link to="/settings" class="nav-link">Settings</router-link>
-          <router-link to="/assistant" class="nav-link">AI</router-link>
+          <router-link to="/" class="nav-link">首页</router-link>
+          <router-link to="/sources" class="nav-link active">订阅源</router-link>
+          <router-link to="/search" class="nav-link">搜索</router-link>
+          <router-link to="/settings" class="nav-link">设置</router-link>
+          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
         </nav>
       </div>
       <div class="user-menu">
         <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">Logout</button>
+        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
       </div>
     </header>
 
@@ -118,15 +118,15 @@ function handleSourceAdded() {
       <!-- Page header -->
       <div class="page-header">
         <div>
-          <h2>News Sources</h2>
-          <p class="subtitle">Manage your news feeds and data sources</p>
+          <h2>新闻订阅源</h2>
+          <p class="subtitle">管理你的新闻源和数据来源</p>
         </div>
         <div class="header-actions">
           <button class="btn-secondary" @click="showLogs = !showLogs" style="margin-right: 1rem">
-            {{ showLogs ? 'Hide Logs' : 'Show Logs' }}
+            {{ showLogs ? '隐藏日志' : '显示日志' }}
           </button>
           <button class="btn-primary" @click="showAddModal = true">
-            + Add Source
+            + 添加订阅源
           </button>
         </div>
       </div>
@@ -137,24 +137,24 @@ function handleSourceAdded() {
       <!-- Filters -->
       <div class="filters card">
         <div class="filter-group">
-          <label>Status</label>
+          <label>状态</label>
           <select v-model="filterStatus" @change="handleFilter" class="input">
-            <option value="">All</option>
-            <option value="active">Active</option>
-            <option value="paused">Paused</option>
-            <option value="error">Error</option>
-            <option value="pending">Pending</option>
+            <option value="">全部</option>
+            <option value="active">活跃</option>
+            <option value="paused">暂停</option>
+            <option value="error">错误</option>
+            <option value="pending">等待中</option>
           </select>
         </div>
         <div class="filter-stats">
           <span class="stat">
-            <strong>{{ sourceStore.sourceCount }}</strong> sources
+            <strong>{{ sourceStore.sourceCount }}</strong> 个订阅源
           </span>
           <span class="stat">
-            <strong>{{ sourceStore.activeSources.length }}</strong> active
+            <strong>{{ sourceStore.activeSources.length }}</strong> 个活跃
           </span>
           <span class="stat error" v-if="sourceStore.errorSources.length > 0">
-            <strong>{{ sourceStore.errorSources.length }}</strong> errors
+            <strong>{{ sourceStore.errorSources.length }}</strong> 个错误
           </span>
         </div>
       </div>
@@ -162,21 +162,21 @@ function handleSourceAdded() {
       <!-- Loading -->
       <div v-if="sourceStore.loading" class="loading">
         <div class="spinner"></div>
-        <span>Loading sources...</span>
+        <span>加载订阅源中...</span>
       </div>
 
       <!-- Error -->
       <div v-else-if="sourceStore.error" class="error-message card">
         {{ sourceStore.error }}
-        <button @click="sourceStore.clearError">Dismiss</button>
+        <button @click="sourceStore.clearError">关闭</button>
       </div>
 
       <!-- Empty state -->
       <div v-else-if="sourceStore.sources.length === 0" class="empty-state card">
         <div class="empty-icon">+</div>
-        <h3>No sources yet</h3>
-        <p>Add your first news source to start collecting articles.</p>
-        <button class="btn-primary" @click="showAddModal = true">Add Source</button>
+        <h3>暂无订阅源</h3>
+        <p>添加你的第一个新闻订阅源，开始收集文章。</p>
+        <button class="btn-primary" @click="showAddModal = true">添加订阅源</button>
       </div>
 
       <!-- Source list -->
@@ -205,13 +205,13 @@ function handleSourceAdded() {
 
           <div class="source-meta">
             <span class="meta-item">
-              <strong>{{ source.item_count }}</strong> items
+              <strong>{{ source.item_count }}</strong> 条
             </span>
             <span class="meta-item">
-              <strong>{{ source.fetch_count }}</strong> fetches
+              <strong>{{ source.fetch_count }}</strong> 次抓取
             </span>
             <span class="meta-item">
-              Last: {{ formatDate(source.last_fetched_at) }}
+              上次: {{ formatDate(source.last_fetched_at) }}
             </span>
           </div>
 
@@ -224,8 +224,8 @@ function handleSourceAdded() {
           </div>
 
           <div class="source-actions">
-            <button class="btn-sm" @click="handleRefresh(source)">Refresh</button>
-            <button class="btn-sm btn-danger" @click="handleDelete(source)">Delete</button>
+            <button class="btn-sm" @click="handleRefresh(source)">刷新</button>
+            <button class="btn-sm btn-danger" @click="handleDelete(source)">删除</button>
           </div>
         </div>
       </div>
