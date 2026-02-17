@@ -96,8 +96,8 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
-    openai_timeout: int = 60
-    openai_max_retries: int = 2
+    openai_timeout: int = 30
+    openai_max_retries: int = 1
 
     # === External Search ===
     tavily_api_key: Optional[str] = None

@@ -17,3 +17,6 @@ openspec/
 
 # Gemini AI
 .gemini/
+
+# Windows NUL 设备文件
+nul
