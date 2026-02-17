@@ -7,7 +7,12 @@
       "Bash(timeout /t 10 /nobreak)",
       "Bash(conda env list:*)",
       "Bash(curl:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(python -c:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(taskkill:*)"
     ]
   }
 }

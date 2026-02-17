@@ -1,4 +1,4 @@
-"""AI Assistant API routes with streaming chat support."""
+"""AI Assistant API routes with streaming chat and RAG support."""
 
 import json
 from typing import AsyncGenerator, List, Optional
@@ -61,6 +61,55 @@ async def chat_with_assistant(
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             async for delta in service.chat(messages=messages, user_id=current_user.id):
+                payload = json.dumps({"type": "delta", "content": delta})
+                yield f"data: {payload}\n\n"
+            yield 'data: {"type": "done"}\n\n'
+        except Exception as e:
+            error_payload = json.dumps({"type": "error", "content": str(e)})
+            yield f"data: {error_payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/chat-rag", response_model=ResponseBase[ChatResponseData])
+async def chat_with_rag(
+    request: ChatRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """
+    Chat with RAG-enabled AI assistant.
+
+    The AI can autonomously retrieve information from:
+    - User's news library (Elasticsearch)
+    - Recent news (MongoDB)
+    - External web search (Tavily)
+    """
+    from app.services.ai.rag_assistant import RAGAssistant
+
+    service = RAGAssistant()
+    messages: List[dict] = [m.model_dump() for m in request.messages]
+
+    if not request.stream:
+        chunks = []
+        async for chunk in service.chat_with_rag(
+            messages=messages, user_id=current_user.id
+        ):
+            chunks.append(chunk)
+        return success_response(data=ChatResponseData(reply="".join(chunks)))
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for delta in service.chat_with_rag(
+                messages=messages, user_id=current_user.id
+            ):
                 payload = json.dumps({"type": "delta", "content": delta})
                 yield f"data: {payload}\n\n"
             yield 'data: {"type": "done"}\n\n'

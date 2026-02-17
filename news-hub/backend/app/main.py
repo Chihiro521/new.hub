@@ -3,6 +3,7 @@ FastAPI Application Entry Point
 
 Configures the application with middleware, routers, and lifecycle events.
 """
+# RAG assistant support added
 
 from contextlib import asynccontextmanager
 

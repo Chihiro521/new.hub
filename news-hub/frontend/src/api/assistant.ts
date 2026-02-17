@@ -47,7 +47,7 @@ export const assistantApi = {
     signal?: AbortSignal
   ): Promise<void> {
     const token = localStorage.getItem('access_token')
-    const response = await fetch('/api/v1/assistant/chat', {
+    const response = await fetch('/api/v1/assistant/chat-rag', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -99,7 +99,7 @@ export const assistantApi = {
 
   // Non-streaming chat fallback
   async chat(messages: ChatMessage[]): Promise<ApiResponse<{ reply: string }>> {
-    const response = await apiClient.post<ApiResponse<{ reply: string }>>('/assistant/chat', {
+    const response = await apiClient.post<ApiResponse<{ reply: string }>>('/assistant/chat-rag', {
       messages,
       stream: false,
     })
