@@ -13,13 +13,18 @@ from loguru import logger
 
 from app.core.config import settings
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing context.
+# Keep pbkdf2_sha256 as default for new passwords while allowing
+# verification of legacy bcrypt hashes (e.g. existing demo data users).
+pwd_context = CryptContext(
+    schemes=["pbkdf2_sha256", "bcrypt"],
+    deprecated="auto",
+)
 
 
 def hash_password(password: str) -> str:
     """
-    Hash a plaintext password using bcrypt.
+    Hash a plaintext password.
 
     Args:
         password: Plaintext password
@@ -41,7 +46,29 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         bool: True if password matches
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception as e:
+        # Compatibility fallback for legacy bcrypt hashes when
+        # passlib/bcrypt backend versions are mismatched.
+        if isinstance(hashed_password, str) and hashed_password.startswith("$2"):
+            try:
+                import bcrypt
+
+                return bcrypt.checkpw(
+                    plain_password.encode("utf-8"),
+                    hashed_password.encode("utf-8"),
+                )
+            except Exception as fallback_error:
+                logger.warning(
+                    "Password verification failed "
+                    f"(passlib + bcrypt fallback): {e}; "
+                    f"fallback error: {fallback_error}"
+                )
+                return False
+
+        logger.warning(f"Password verification failed: {e}")
+        return False
 
 
 def create_access_token(

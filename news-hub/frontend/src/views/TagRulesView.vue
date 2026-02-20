@@ -1,12 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
 import { useTagStore } from '@/stores/tags'
 import type { TagRuleResponse, TagRuleCreate, TagRuleUpdate, MatchMode } from '@/api/tags'
 
-const router = useRouter()
-const authStore = useAuthStore()
 const tagStore = useTagStore()
 
 // State
@@ -40,11 +36,6 @@ onMounted(() => {
 })
 
 // Methods
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-}
-
 function openCreateModal() {
   isEditing.value = false
   editingId.value = null
@@ -128,29 +119,6 @@ function useExtractedKeyword(kw: string) {
 
 <template>
   <div class="tags-page">
-    <div class="bg-decoration">
-      <div class="circle circle-1"></div>
-      <div class="circle circle-2"></div>
-    </div>
-
-    <header class="header glass">
-      <div class="header-left">
-        <h1 class="logo gradient-text">News Hub</h1>
-        <nav class="nav">
-          <router-link to="/" class="nav-link">首页</router-link>
-          <router-link to="/sources" class="nav-link">订阅源</router-link>
-          <router-link to="/tags" class="nav-link active">标签</router-link>
-          <router-link to="/search" class="nav-link">搜索</router-link>
-          <router-link to="/settings" class="nav-link">设置</router-link>
-          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
-        </nav>
-      </div>
-      <div class="user-menu">
-        <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
-      </div>
-    </header>
-
     <main class="main-content">
       <div class="page-header">
         <div>
@@ -309,83 +277,6 @@ function useExtractedKeyword(kw: string) {
 </template>
 
 <style scoped>
-.tags-page {
-  min-height: 100vh;
-  padding-bottom: 2rem;
-}
-
-/* Background */
-.bg-decoration {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.circle {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.3;
-}
-
-.circle-1 {
-  width: 500px;
-  height: 500px;
-  background: var(--color-primary-200);
-  top: -100px;
-  left: -100px;
-}
-
-.circle-2 {
-  width: 400px;
-  height: 400px;
-  background: var(--color-secondary-200);
-  bottom: -50px;
-  right: -50px;
-}
-
-/* Header */
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 2rem;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-}
-
-.logo {
-  font-family: var(--font-display);
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.nav {
-  display: flex;
-  gap: 1rem;
-}
-
-.nav-link {
-  color: var(--color-neutral-600);
-  text-decoration: none;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  transition: all 0.2s;
-}
-
-.nav-link:hover, .nav-link.active {
-  background: rgba(255, 255, 255, 0.5);
-  color: var(--color-primary-600);
-}
-
 /* Main */
 .main-content {
   max-width: 900px;

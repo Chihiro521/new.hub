@@ -1,3 +1,6 @@
 export { useAuthStore } from './auth'
 export { useSourceStore } from './sources'
 export { useNewsStore } from './news'
+export { useTagStore } from './tags'
+export { useThemeStore } from './theme'
+export { useAssistantStore } from './assistant'

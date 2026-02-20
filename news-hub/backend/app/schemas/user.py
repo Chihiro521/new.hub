@@ -6,8 +6,9 @@ Pydantic models for user-related API contracts.
 
 from datetime import datetime
 from typing import Optional
+import re
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class UserBase(BaseModel):
@@ -20,7 +21,15 @@ class UserBase(BaseModel):
         pattern=r"^[a-zA-Z0-9_-]+$",
         description="Username (alphanumeric, underscore, hyphen only)",
     )
-    email: EmailStr = Field(..., description="User email address")
+    email: str = Field(..., description="User email address")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        value = (v or "").strip()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
+            raise ValueError("Invalid email format")
+        return value.lower()
 
 
 class UserCreate(UserBase):
@@ -52,9 +61,19 @@ class UserLogin(BaseModel):
 class UserUpdate(BaseModel):
     """Schema for user profile update."""
 
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     avatar_url: Optional[str] = None
     settings: Optional[dict] = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_optional_email(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        value = v.strip()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
+            raise ValueError("Invalid email format")
+        return value.lower()
 
 
 class UserInDB(UserBase):

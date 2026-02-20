@@ -364,28 +364,38 @@ class RAGAssistant:
     ) -> Dict[str, Any]:
         """Handle web_search tool call."""
         try:
-            from app.services.ai.web_search import WebSearchClient
+            from app.services.ai.search_providers import (
+                ExternalSearchQuery,
+                ExternalSearchRouter,
+            )
 
-            client = WebSearchClient()
-            if not client.available:
+            router = ExternalSearchRouter()
+            if not any(p.available for p in router.providers.values()):
                 return {
                     "error": "External search not configured",
                     "results": [],
                 }
 
-            results = await client.search(query, max_results=max_results)
+            execution = await router.search(
+                request=ExternalSearchQuery(query=query, max_results=max_results),
+                provider=settings.external_search_default_provider,
+            )
 
             return {
                 "query": query,
-                "count": len(results),
+                "provider_used": execution.provider_used,
+                "fallback_used": execution.fallback_used,
+                "count": len(execution.results),
                 "results": [
                     {
-                        "title": r.get("title", ""),
-                        "url": r.get("url", ""),
-                        "description": r.get("description", ""),
-                        "score": r.get("score", 0),
+                        "title": r.title,
+                        "url": r.url,
+                        "description": r.description,
+                        "score": r.score,
+                        "provider": r.provider,
+                        "engine": r.engine,
                     }
-                    for r in results
+                    for r in execution.results
                 ],
             }
         except Exception as e:
@@ -757,7 +767,7 @@ class RAGAssistant:
         The AI can autonomously decide when to retrieve information from:
         - User's news library (Elasticsearch)
         - Recent news (MongoDB)
-        - External web search (Tavily)
+        - External web search (SearXNG/Tavily)
         """
         t0 = time.monotonic()
 
@@ -780,7 +790,7 @@ class RAGAssistant:
 你可以使用以下工具来帮助用户：
 1. search_user_news - 搜索用户的新闻库
 2. get_recent_news - 获取用户最近的新闻
-3. web_search - 搜索互联网获取最新信息
+3. web_search - 搜索互联网获取最新信息（SearXNG/Tavily）
 4. fetch_rss - 主动抓取RSS/Atom源的文章列表
 5. scrape_webpage - 抓取网页正文内容进行分析
 6. save_news_to_library - 保存新闻到用户的新闻库

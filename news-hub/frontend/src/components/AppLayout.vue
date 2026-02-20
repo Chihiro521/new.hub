@@ -12,11 +12,12 @@ function handleLogout() {
 </script>
 
 <template>
-  <div class="home-page">
-    <!-- Background decoration -->
+  <div class="app-layout">
+    <!-- Background -->
     <div class="bg-decoration">
       <div class="circle circle-1"></div>
       <div class="circle circle-2"></div>
+      <div class="circle circle-3"></div>
     </div>
 
     <!-- Header -->
@@ -24,9 +25,12 @@ function handleLogout() {
       <div class="header-left">
         <h1 class="logo gradient-text">News Hub</h1>
         <nav class="nav">
-          <router-link to="/" class="nav-link active">首页</router-link>
+          <router-link to="/" class="nav-link">新闻</router-link>
           <router-link to="/sources" class="nav-link">订阅源</router-link>
+          <router-link to="/tags" class="nav-link">标签</router-link>
+          <router-link to="/search" class="nav-link">搜索</router-link>
           <router-link to="/assistant" class="nav-link">AI 助手</router-link>
+          <router-link to="/settings" class="nav-link">设置</router-link>
         </nav>
       </div>
       <div class="user-menu">
@@ -37,46 +41,39 @@ function handleLogout() {
       </div>
     </header>
 
-    <!-- Main content -->
-    <main class="main-content">
-      <div class="welcome-card card">
-        <h2>欢迎，{{ authStore.username || '用户' }}！</h2>
-        <p>你的个人新闻中心已就绪。</p>
-        <router-link to="/sources" class="btn-primary action-btn">
-          管理订阅源
-        </router-link>
-      </div>
-    </main>
+    <!-- Page Content -->
+    <RouterView />
   </div>
 </template>
 
 <style scoped>
-.home-page {
+.app-layout {
   min-height: 100vh;
   position: relative;
 }
 
-/* Background */
+/* Background Decoration */
 .bg-decoration {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: -1;
+  z-index: 0;
+  overflow: hidden;
 }
 
 .circle {
   position: absolute;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.4;
+  opacity: 0.25;
 }
 
 .circle-1 {
-  width: 600px;
-  height: 600px;
+  width: 500px;
+  height: 500px;
   background: var(--color-primary-200);
-  top: -200px;
-  right: -200px;
+  top: -150px;
+  right: -100px;
 }
 
 .circle-2 {
@@ -85,6 +82,15 @@ function handleLogout() {
   background: var(--color-secondary-200);
   bottom: -100px;
   left: -100px;
+}
+
+.circle-3 {
+  width: 300px;
+  height: 300px;
+  background: var(--color-primary-300);
+  top: 40%;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 /* Header */
@@ -129,7 +135,7 @@ function handleLogout() {
   background: var(--color-primary-50);
 }
 
-.nav-link.active {
+.nav-link.router-link-exact-active {
   color: var(--color-primary-600);
   background: var(--color-primary-100);
 }
@@ -150,34 +156,21 @@ function handleLogout() {
   font-size: var(--text-sm);
 }
 
-/* Main content */
-.main-content {
-  padding: var(--space-8);
-  max-width: 1200px;
-  margin: 0 auto;
-}
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
 
-.welcome-card {
-  text-align: center;
-  max-width: 500px;
-  margin: var(--space-16) auto;
-}
+  .header-left {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
 
-.welcome-card h2 {
-  font-family: var(--font-display);
-  font-size: var(--text-3xl);
-  color: var(--color-neutral-800);
-  margin-bottom: var(--space-4);
-}
-
-.welcome-card p {
-  color: var(--color-neutral-600);
-  font-size: var(--text-lg);
-  margin-bottom: var(--space-6);
-}
-
-.action-btn {
-  display: inline-block;
-  text-decoration: none;
+  .nav {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
 }
 </style>

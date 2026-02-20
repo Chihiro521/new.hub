@@ -12,7 +12,18 @@
       "Bash(python -c:*)",
       "Bash(timeout:*)",
       "Bash(ping:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(docker:*)",
+      "Bash(where:*)",
+      "Bash(git clone:*)",
+      "Bash(git restore:*)",
+      "Bash(git config:*)",
+      "Bash(git checkout:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(del:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.crawl4ai.com)"
     ]
   }
 }

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from pymongo.errors import BulkWriteError
 
 from app.db.mongo import mongodb
 
@@ -126,6 +127,14 @@ class VirtualSourceManager:
                 continue
             existing_urls.add(url)
 
+            item_metadata = item.get("metadata") or {}
+            merged_extra = {
+                "provider": provider,
+                "engine": item.get("engine"),
+                "raw_score": item.get("score"),
+                **item_metadata,
+            }
+
             docs.append(
                 {
                     "user_id": user_id,
@@ -146,7 +155,7 @@ class VirtualSourceManager:
                         "like_count": 0,
                         "comment_count": 0,
                         "language": "zh",
-                        "extra": {"provider": provider},
+                        "extra": merged_extra,
                     },
                     "is_read": False,
                     "is_starred": False,
@@ -178,6 +187,21 @@ class VirtualSourceManager:
             await cls._index_to_es(user_id, docs, result.inserted_ids)
 
             logger.info(f"Ingested {stored} items via virtual source '{source_name}'")
+            return stored
+        except BulkWriteError as e:
+            details = e.details or {}
+            stored = int(details.get("nInserted", 0) or 0)
+            if stored > 0:
+                await mongodb.db.sources.update_one(
+                    {"_id": source_doc["_id"]},
+                    {
+                        "$inc": {"item_count": stored},
+                        "$set": {"updated_at": now},
+                    },
+                )
+            logger.warning(
+                f"Virtual source ingestion partially succeeded: inserted={stored}, errors={len(details.get('writeErrors', []))}"
+            )
             return stored
         except Exception as e:
             logger.error(f"Virtual source ingestion failed: {e}")

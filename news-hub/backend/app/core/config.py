@@ -101,6 +101,19 @@ class Settings(BaseSettings):
 
     # === External Search ===
     tavily_api_key: Optional[str] = None
+    searxng_base_url: str = "http://localhost:8080"
+    searxng_api_key: Optional[str] = None
+    external_search_timeout: int = 15
+    external_search_default_provider: str = "auto"
+    external_search_fallback_provider: str = "tavily"
+    external_search_default_limit: int = 10
+
+    # === External Ingestion Governance ===
+    external_ingest_max_concurrency: int = 4
+    external_ingest_retry_attempts: int = 2
+    external_ingest_retry_backoff_seconds: float = 0.75
+    external_ingest_domain_interval_seconds: float = 0.5
+    external_ingest_min_quality_score: float = 0.15
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -1,10 +1,13 @@
 """AI Assistant API routes with streaming chat and RAG support."""
 
+import asyncio
 import json
+from datetime import datetime
 from typing import AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from loguru import logger
 
 from app.core.deps import get_current_user
 from app.db.mongo import mongodb
@@ -17,6 +20,16 @@ from app.schemas.assistant import (
     ClassifyResponseData,
     DiscoverSourcesRequest,
     DiscoverSourcesResponseData,
+    ExternalSearchOptionsResponseData,
+    ExternalSearchRequest,
+    ExternalSearchResponseData,
+    ExternalSearchResultItem,
+    ExternalSearchStatusResponseData,
+    IngestJobStatusResponseData,
+    IngestOneRequest,
+    IngestOneResponseData,
+    SearchIngestRequest,
+    SearchIngestResponseData,
     SummarizeRequest,
     SummarizeResponseData,
 )
@@ -90,7 +103,7 @@ async def chat_with_rag(
     The AI can autonomously retrieve information from:
     - User's news library (Elasticsearch)
     - Recent news (MongoDB)
-    - External web search (Tavily)
+    - External web search (SearXNG/Tavily)
     """
     from app.services.ai.rag_assistant import RAGAssistant
 
@@ -201,8 +214,237 @@ async def augmented_search(
         user_id=current_user.id,
         include_external=request.include_external,
         persist_external=request.persist_external,
+        persist_mode=request.persist_mode,
+        external_provider=request.external_provider,
+        max_external_results=request.max_external_results,
+        time_range=request.time_range,
+        language=request.language,
+        engines=request.engines,
     )
     return success_response(data=data)
+
+
+@router.get(
+    "/external-search/options",
+    response_model=ResponseBase[ExternalSearchOptionsResponseData],
+)
+async def external_search_options(
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Get external provider options and capabilities for frontend controls."""
+    _ = current_user
+    service = AssistantService()
+    payload = await service.external_search_options()
+    data = ExternalSearchOptionsResponseData(
+        default_provider=str(payload.get("default_provider", "auto")),
+        fallback_provider=str(payload.get("fallback_provider", "tavily")),
+        providers=payload.get("providers", []),
+    )
+    return success_response(data=data)
+
+
+@router.get(
+    "/external-search/status",
+    response_model=ResponseBase[ExternalSearchStatusResponseData],
+)
+async def external_search_status(
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Get provider runtime health status."""
+    _ = current_user
+    service = AssistantService()
+    payload = await service.external_search_status()
+    data = ExternalSearchStatusResponseData(
+        default_provider=str(payload.get("default_provider", "auto")),
+        fallback_provider=str(payload.get("fallback_provider", "tavily")),
+        healthy_provider_count=int(payload.get("healthy_provider_count", 0)),
+        providers=payload.get("providers", []),
+    )
+    return success_response(data=data)
+
+
+@router.post(
+    "/search/ingest",
+    response_model=ResponseBase[SearchIngestResponseData],
+)
+async def queue_search_ingest(
+    request: SearchIngestRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Queue ingestion for selected external search results."""
+    service = AssistantService()
+    try:
+        payload = await service.queue_search_ingestion(
+            user_id=current_user.id,
+            session_id=request.session_id,
+            selected_urls=request.selected_urls,
+            persist_mode=request.persist_mode,
+        )
+    except ValueError as e:
+        raise _service_error_to_http(e)
+    return success_response(data=SearchIngestResponseData(**payload))
+
+
+@router.get(
+    "/ingest-jobs/{job_id}",
+    response_model=ResponseBase[IngestJobStatusResponseData],
+)
+async def get_ingest_job(
+    job_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Fetch status for an ingestion job."""
+    service = AssistantService()
+    job = await service.get_ingest_job(user_id=current_user.id, job_id=job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingest job not found",
+        )
+    data = IngestJobStatusResponseData(
+        job_id=str(job["_id"]),
+        status=job.get("status", "unknown"),
+        session_id=job.get("session_id", ""),
+        persist_mode=job.get("persist_mode", "snippet"),
+        total_items=job.get("total_items", 0),
+        processed_items=job.get("processed_items", 0),
+        stored_items=job.get("stored_items", 0),
+        failed_items=job.get("failed_items", 0),
+        retry_count=job.get("retry_count", 0),
+        average_quality_score=job.get("average_quality_score", 0.0),
+        error_message=job.get("error_message"),
+        created_at=job.get("created_at", datetime.utcnow()),
+        updated_at=job.get("updated_at", datetime.utcnow()),
+    )
+    return success_response(data=data)
+
+
+# === External Search (pure, no RRF fusion) ===
+
+
+@router.post(
+    "/external-search",
+    response_model=ResponseBase[ExternalSearchResponseData],
+)
+async def external_search(
+    request: ExternalSearchRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Pure external search via SearXNG/Tavily — no internal ES mixing."""
+    _ = current_user
+    from app.services.ai.search_providers import ExternalSearchQuery, ExternalSearchRouter
+
+    router_inst = ExternalSearchRouter()
+    query = ExternalSearchQuery(
+        query=request.query,
+        max_results=request.max_results,
+        time_range=request.time_range,
+        language=request.language,
+    )
+    execution = await router_inst.search(request=query, provider=request.provider)
+
+    items = [
+        ExternalSearchResultItem(
+            title=r.title,
+            url=r.url,
+            description=r.description,
+            source_name=r.source_name,
+            score=r.score,
+            provider=r.provider,
+            engine=r.engine,
+            published_at=r.published_at.isoformat() if r.published_at else None,
+        )
+        for r in execution.results
+    ]
+    return success_response(
+        data=ExternalSearchResponseData(
+            query=request.query,
+            results=items,
+            total=len(items),
+            provider_used=execution.provider_used,
+        )
+    )
+
+
+# === Ingest One (crawl + persist single URL) ===
+
+
+@router.post(
+    "/ingest-one",
+    response_model=ResponseBase[IngestOneResponseData],
+)
+async def ingest_one(
+    request: IngestOneRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Crawl a single URL with crawl4ai and ingest into user's library."""
+    from app.services.ai.virtual_source import VirtualSourceManager
+    from app.services.collector.webpage_extractor import WebpageExtractor
+
+    extractor = WebpageExtractor()
+
+    # Crawl with 15s timeout; fallback to snippet on failure
+    extracted = {}
+    try:
+        extracted = await asyncio.wait_for(
+            extractor.extract(request.url), timeout=15.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"Crawl timeout for {request.url}, falling back to snippet")
+    except Exception as e:
+        logger.warning(f"Crawl failed for {request.url}: {e}")
+
+    # Build the item to ingest
+    title = (extracted.get("title") or request.title or "").strip()
+    description = (extracted.get("description") or request.description or "").strip()
+    content = extracted.get("content", "")
+    quality_score = extracted.get("quality_score", 0.0)
+
+    if not title and not content:
+        # Nothing useful extracted and no fallback title
+        title = request.title or request.url
+        description = request.description
+
+    item = {
+        "title": title,
+        "url": request.url,
+        "description": description,
+        "content": content,
+        "image_url": extracted.get("image_url"),
+        "published_at": extracted.get("published_at"),
+        "author": extracted.get("author", ""),
+        "score": quality_score,
+    }
+
+    stored = await VirtualSourceManager.ingest_results(
+        user_id=current_user.id,
+        provider=request.provider,
+        items=[item],
+    )
+
+    if stored > 0:
+        # Retrieve the just-inserted news_id
+        doc = await mongodb.db.news.find_one(
+            {"user_id": current_user.id, "url": request.url},
+            sort=[("created_at", -1)],
+        )
+        news_id = str(doc["_id"]) if doc else None
+        return success_response(
+            data=IngestOneResponseData(
+                success=True,
+                news_id=news_id,
+                quality_score=quality_score,
+                message="入库成功",
+            )
+        )
+
+    return success_response(
+        data=IngestOneResponseData(
+            success=False,
+            quality_score=quality_score,
+            message="文章已存在或入库失败",
+        )
+    )
 
 
 # === Audit Log Endpoints ===

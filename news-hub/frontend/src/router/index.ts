@@ -6,45 +6,45 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'home',
-      component: () => import('@/views/NewsView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/news',
-      name: 'news',
-      component: () => import('@/views/NewsView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/sources',
-      name: 'sources',
-      component: () => import('@/views/SourcesView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/tags',
-      name: 'tags',
-      component: () => import('@/views/TagRulesView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/search',
-      name: 'search',
-      component: () => import('@/views/SearchView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/assistant',
-      name: 'assistant',
-      component: () => import('@/views/AssistantView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
-      path: '/settings',
-      name: 'settings',
-      component: () => import('@/views/SettingsView.vue'),
-      meta: { requiresAuth: true }
+      component: () => import('@/components/AppLayout.vue'),
+      meta: { requiresAuth: true },
+      children: [
+        {
+          path: '',
+          name: 'home',
+          component: () => import('@/views/NewsView.vue')
+        },
+        {
+          path: 'sources',
+          name: 'sources',
+          component: () => import('@/views/SourcesView.vue')
+        },
+        {
+          path: 'tags',
+          name: 'tags',
+          component: () => import('@/views/TagRulesView.vue')
+        },
+        {
+          path: 'search',
+          name: 'search',
+          component: () => import('@/views/SearchView.vue')
+        },
+        {
+          path: 'assistant',
+          name: 'assistant',
+          component: () => import('@/views/AssistantView.vue')
+        },
+        {
+          path: 'assistant/search-workbench',
+          name: 'assistant-search-workbench',
+          component: () => import('@/views/AssistantSearchWorkbenchView.vue')
+        },
+        {
+          path: 'settings',
+          name: 'settings',
+          component: () => import('@/views/SettingsView.vue')
+        }
+      ]
     },
     {
       path: '/login',

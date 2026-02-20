@@ -1,15 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
 import { useNewsStore } from '@/stores/news'
 import { useSourceStore } from '@/stores/sources'
 import { useTagStore } from '@/stores/tags'
 import SearchBar from '@/components/SearchBar.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
 
-const router = useRouter()
-const authStore = useAuthStore()
 const newsStore = useNewsStore()
 const sourceStore = useSourceStore()
 const tagStore = useTagStore()
@@ -29,11 +25,6 @@ onMounted(async () => {
     tagStore.fetchUserTags(),
   ])
 })
-
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-}
 
 async function applyFilters() {
   await newsStore.fetchNews({
@@ -104,31 +95,6 @@ const sourceOptions = computed(() => {
 
 <template>
   <div class="news-page">
-    <!-- Background -->
-    <div class="bg-decoration">
-      <div class="circle circle-1"></div>
-      <div class="circle circle-2"></div>
-      <div class="circle circle-3"></div>
-    </div>
-
-    <!-- Header -->
-    <header class="header glass">
-      <div class="header-left">
-        <h1 class="logo gradient-text">News Hub</h1>
-        <nav class="nav">
-          <router-link to="/" class="nav-link active">新闻</router-link>
-          <router-link to="/sources" class="nav-link">订阅源</router-link>
-          <router-link to="/search" class="nav-link">搜索</router-link>
-          <router-link to="/settings" class="nav-link">设置</router-link>
-          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
-        </nav>
-      </div>
-      <div class="user-menu">
-        <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
-      </div>
-    </header>
-
     <!-- Main -->
     <main class="main-content">
       <!-- Main Layout with Sidebar -->
@@ -285,7 +251,6 @@ const sourceOptions = computed(() => {
 
 <style scoped>
 .news-page {
-  min-height: 100vh;
   position: relative;
 }
 
@@ -358,109 +323,6 @@ const sourceOptions = computed(() => {
 /* Feed Column */
 .feed-column {
   min-width: 0;
-}
-
-/* Background */
-.bg-decoration {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.circle {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.25;
-}
-
-.circle-1 {
-  width: 500px;
-  height: 500px;
-  background: var(--color-primary-200);
-  top: -150px;
-  right: -100px;
-}
-
-.circle-2 {
-  width: 400px;
-  height: 400px;
-  background: var(--color-secondary-200);
-  bottom: -100px;
-  left: -100px;
-}
-
-.circle-3 {
-  width: 300px;
-  height: 300px;
-  background: var(--color-primary-300);
-  top: 40%;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-/* Header */
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-4) var(--space-8);
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-
-.logo {
-  font-family: var(--font-display);
-  font-size: var(--text-2xl);
-  font-weight: 700;
-}
-
-.nav {
-  display: flex;
-  gap: var(--space-4);
-}
-
-.nav-link {
-  color: var(--color-neutral-600);
-  text-decoration: none;
-  font-weight: 500;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
-}
-
-.nav-link:hover {
-  color: var(--color-primary-600);
-  background: var(--color-primary-50);
-}
-
-.nav-link.active {
-  color: var(--color-primary-600);
-  background: var(--color-primary-100);
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.username {
-  color: var(--color-neutral-600);
-  font-weight: 500;
-}
-
-.logout-btn {
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-sm);
 }
 
 /* Main */

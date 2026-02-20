@@ -1,38 +1,11 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 
-const router = useRouter()
-const authStore = useAuthStore()
 const themeStore = useThemeStore()
-
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-}
 </script>
 
 <template>
   <div class="settings-page">
-    <!-- Header -->
-    <header class="header glass">
-      <div class="header-left">
-        <h1 class="logo gradient-text">News Hub</h1>
-        <nav class="nav">
-          <router-link to="/" class="nav-link">首页</router-link>
-          <router-link to="/sources" class="nav-link">订阅源</router-link>
-          <router-link to="/tags" class="nav-link">标签</router-link>
-          <router-link to="/search" class="nav-link">搜索</router-link>
-          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
-        </nav>
-      </div>
-      <div class="user-menu">
-        <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
-      </div>
-    </header>
-
     <main class="main-content">
       <div class="page-header">
         <h2>设置</h2>
@@ -105,67 +78,6 @@ function handleLogout() {
 </template>
 
 <style scoped>
-.settings-page {
-  min-height: 100vh;
-}
-
-/* Header (Shared with other pages) */
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 2rem;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-}
-
-.logo {
-  font-family: var(--font-display);
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.nav {
-  display: flex;
-  gap: 1rem;
-}
-
-.nav-link {
-  color: var(--color-neutral-600);
-  text-decoration: none;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  transition: all 0.2s;
-}
-
-.nav-link:hover, .nav-link.active {
-  background: rgba(255, 255, 255, 0.5);
-  color: var(--color-primary-600);
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.username {
-  color: var(--color-neutral-600);
-  font-weight: 500;
-}
-
-.logout-btn {
-  padding: 0.5rem 1rem;
-  font-size: 0.9rem;
-}
-
 /* Main */
 .main-content {
   max-width: 800px;

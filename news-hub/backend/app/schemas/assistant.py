@@ -4,7 +4,8 @@ AI Assistant Schema
 Request and response models for the AI assistant endpoints.
 """
 
-from typing import List, Literal, Optional
+from datetime import datetime
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -96,6 +97,24 @@ class AugmentedSearchRequest(BaseModel):
     persist_external: bool = Field(
         default=False, description="Persist external results to user's library"
     )
+    persist_mode: Literal["none", "snippet", "enriched"] = Field(
+        default="none", description="How external results should be persisted"
+    )
+    external_provider: Literal["auto", "searxng", "tavily"] = Field(
+        default="auto", description="Preferred external search provider"
+    )
+    max_external_results: int = Field(
+        default=10, ge=1, le=50, description="Max number of external results"
+    )
+    time_range: Optional[str] = Field(
+        default=None, description="Optional time range: day, week, month, year"
+    )
+    language: Optional[str] = Field(
+        default=None, description="Language code, e.g. zh-CN, en-US"
+    )
+    engines: Optional[List[str]] = Field(
+        default=None, description="Optional SearXNG engines filter"
+    )
 
 
 class SearchResultItem(BaseModel):
@@ -108,6 +127,8 @@ class SearchResultItem(BaseModel):
     score: float = 0.0
     origin: str = Field(default="internal", description="internal or external")
     news_id: Optional[str] = None
+    provider: Optional[str] = None
+    engine: Optional[str] = None
 
 
 class AugmentedSearchResponseData(BaseModel):
@@ -118,3 +139,139 @@ class AugmentedSearchResponseData(BaseModel):
     results: List[SearchResultItem] = Field(default_factory=list)
     internal_count: int = 0
     external_count: int = 0
+    provider_used: Optional[str] = None
+    fallback_used: bool = False
+    search_session_id: Optional[str] = None
+
+
+class ExternalSearchProviderOption(BaseModel):
+    """Provider capabilities and availability."""
+
+    name: str
+    available: bool
+    supports: Dict[str, bool] = Field(default_factory=dict)
+    engines: List[str] = Field(default_factory=list)
+    languages: List[str] = Field(default_factory=list)
+    time_ranges: List[str] = Field(default_factory=list)
+
+
+class ExternalSearchOptionsResponseData(BaseModel):
+    """External search provider options returned to frontend."""
+
+    default_provider: str
+    fallback_provider: str
+    providers: List[ExternalSearchProviderOption] = Field(default_factory=list)
+
+
+class SearchIngestRequest(BaseModel):
+    """Request to ingest selected search results into user library."""
+
+    session_id: str = Field(..., min_length=1, max_length=128)
+    selected_urls: List[str] = Field(default_factory=list)
+    persist_mode: Literal["snippet", "enriched"] = Field(default="enriched")
+
+
+class SearchIngestResponseData(BaseModel):
+    """Accepted ingest job response."""
+
+    job_id: str
+    status: str
+    queued_count: int
+    persist_mode: str
+
+
+class IngestJobStatusResponseData(BaseModel):
+    """Status payload for an ingest job."""
+
+    job_id: str
+    status: str
+    session_id: str
+    persist_mode: str
+    total_items: int = 0
+    processed_items: int = 0
+    stored_items: int = 0
+    failed_items: int = 0
+    retry_count: int = 0
+    average_quality_score: float = 0.0
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExternalSearchProviderStatusItem(BaseModel):
+    """Health item for one external search provider."""
+
+    provider: str
+    available: bool
+    healthy: bool
+    latency_ms: int = 0
+    message: str = ""
+
+
+class ExternalSearchStatusResponseData(BaseModel):
+    """Aggregated external search status response."""
+
+    default_provider: str
+    fallback_provider: str
+    healthy_provider_count: int = 0
+    providers: List[ExternalSearchProviderStatusItem] = Field(default_factory=list)
+
+
+# --- External Search (pure SearXNG) ---
+
+
+class ExternalSearchRequest(BaseModel):
+    """Request for pure external search (SearXNG/Tavily only, no RRF fusion)."""
+
+    query: str = Field(..., min_length=1, max_length=500, description="Search query")
+    provider: Literal["auto", "searxng", "tavily"] = Field(
+        default="auto", description="Search provider"
+    )
+    max_results: int = Field(default=10, ge=1, le=50, description="Max results")
+    time_range: Optional[str] = Field(
+        default=None, description="Time range: day, week, month, year"
+    )
+    language: Optional[str] = Field(default=None, description="Language code")
+
+
+class ExternalSearchResultItem(BaseModel):
+    """A single external search result."""
+
+    title: str = ""
+    url: str = ""
+    description: str = ""
+    source_name: str = ""
+    score: float = 0.0
+    provider: Optional[str] = None
+    engine: Optional[str] = None
+    published_at: Optional[str] = None
+
+
+class ExternalSearchResponseData(BaseModel):
+    """External search response."""
+
+    query: str
+    results: List[ExternalSearchResultItem] = Field(default_factory=list)
+    total: int = 0
+    provider_used: Optional[str] = None
+
+
+# --- Ingest One ---
+
+
+class IngestOneRequest(BaseModel):
+    """Request to crawl and ingest a single external URL."""
+
+    url: str = Field(..., min_length=1, description="URL to crawl and ingest")
+    title: str = Field(default="", description="Title from search result")
+    description: str = Field(default="", description="Snippet from search result")
+    provider: str = Field(default="searxng", description="Source provider name")
+
+
+class IngestOneResponseData(BaseModel):
+    """Response after ingesting a single URL."""
+
+    success: bool
+    news_id: Optional[str] = None
+    quality_score: float = 0.0
+    message: str = ""

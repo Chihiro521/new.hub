@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import time
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from bson import ObjectId
 from loguru import logger
@@ -20,6 +20,7 @@ from app.schemas.assistant import (
     SummarizeResponseData,
 )
 from app.services.ai.audit import AuditLogger
+from app.services.ai.ingestion_service import ExternalIngestionService
 from app.services.ai.llm_client import get_llm_client
 from app.services.ai.prompts import (
     CLASSIFY_TEMPLATE,
@@ -28,6 +29,7 @@ from app.services.ai.prompts import (
     SUMMARIZE_TEMPLATE,
     SYSTEM_CHAT,
 )
+from app.services.ai.search_providers import ExternalSearchQuery, ExternalSearchRouter
 
 
 class AssistantService:
@@ -36,12 +38,18 @@ class AssistantService:
     def __init__(self):
         self.client = get_llm_client()
         self.audit = AuditLogger()
+        self.external_search_router = ExternalSearchRouter()
+        self.external_ingestion = ExternalIngestionService()
 
     async def chat(
         self, messages: List[dict], user_id: str
     ) -> AsyncGenerator[str, None]:
         """Stream assistant chat response chunks."""
         t0 = time.monotonic()
+        external_limit = max(
+            1,
+            min(max_external_results or settings.external_search_default_limit, 50),
+        )
         collected: List[str] = []
 
         if self.client is None:
@@ -302,6 +310,12 @@ class AssistantService:
         user_id: str,
         include_external: bool = True,
         persist_external: bool = False,
+        persist_mode: str = "none",
+        external_provider: str = "auto",
+        max_external_results: int = 10,
+        time_range: Optional[str] = None,
+        language: Optional[str] = None,
+        engines: Optional[List[str]] = None,
     ) -> AugmentedSearchResponseData:
         """Perform AI-augmented search combining internal ES + external web results.
 
@@ -313,7 +327,16 @@ class AssistantService:
         # 1. Run internal and external searches in parallel
         tasks: List[Any] = [self._internal_search(query, user_id)]
         if include_external:
-            tasks.append(self._external_search(query))
+            tasks.append(
+                self._external_search(
+                    query=query,
+                    provider=external_provider,
+                    max_results=external_limit,
+                    time_range=time_range,
+                    language=language,
+                    engines=engines,
+                )
+            )
 
         results_raw = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -321,10 +344,15 @@ class AssistantService:
             results_raw[0] if not isinstance(results_raw[0], Exception) else []
         )
         external_results: List[Dict[str, Any]] = []
+        provider_used: Optional[str] = None
+        fallback_used = False
         if include_external and len(results_raw) > 1:
-            external_results = (
-                results_raw[1] if not isinstance(results_raw[1], Exception) else []
+            external_payload = (
+                results_raw[1] if not isinstance(results_raw[1], Exception) else {}
             )
+            external_results = external_payload.get("results", [])
+            provider_used = external_payload.get("provider_used")
+            fallback_used = bool(external_payload.get("fallback_used", False))
 
         # 2. RRF fusion
         fused = self._rrf_merge(internal_results, external_results)
@@ -339,6 +367,8 @@ class AssistantService:
                 score=item["rrf_score"],
                 origin=item["origin"],
                 news_id=item.get("news_id"),
+                provider=item.get("provider"),
+                engine=item.get("engine"),
             )
             for item in fused[:20]
         ]
@@ -349,14 +379,26 @@ class AssistantService:
             summary = await self._generate_search_summary(query, result_items[:5])
 
         # 5. Persist external if requested
-        if persist_external and external_results:
-            try:
-                from app.services.ai.virtual_source import VirtualSourceManager
+        session_id: Optional[str] = None
+        if external_results:
+            session_id = await self.external_ingestion.create_search_session(
+                user_id=user_id,
+                query=query,
+                provider_used=provider_used or external_provider,
+                results=external_results,
+            )
 
-                await VirtualSourceManager.ingest_results(
+        effective_mode = persist_mode
+        if persist_external and persist_mode == "none":
+            effective_mode = "snippet"
+
+        if effective_mode in {"snippet", "enriched"} and session_id:
+            try:
+                await self.external_ingestion.queue_ingest_job(
                     user_id=user_id,
-                    provider="tavily",
-                    items=external_results,
+                    session_id=session_id,
+                    selected_urls=[],
+                    persist_mode=effective_mode,
                 )
             except Exception as e:
                 logger.warning(f"Failed to persist external results: {e}")
@@ -377,7 +419,37 @@ class AssistantService:
             results=result_items,
             internal_count=len(internal_results),
             external_count=len(external_results),
+            provider_used=provider_used,
+            fallback_used=fallback_used,
+            search_session_id=session_id,
         )
+
+    async def external_search_options(self) -> Dict[str, Any]:
+        """Expose provider capabilities/options for frontend controls."""
+        return await self.external_search_router.options()
+
+    async def external_search_status(self) -> Dict[str, Any]:
+        """Expose provider health status for operations UI."""
+        return await self.external_search_router.status()
+
+    async def queue_search_ingestion(
+        self,
+        user_id: str,
+        session_id: str,
+        selected_urls: List[str],
+        persist_mode: str,
+    ) -> Dict[str, Any]:
+        """Queue ingestion for a search session and selected URLs."""
+        return await self.external_ingestion.queue_ingest_job(
+            user_id=user_id,
+            session_id=session_id,
+            selected_urls=selected_urls,
+            persist_mode=persist_mode,
+        )
+
+    async def get_ingest_job(self, user_id: str, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get ingest job status scoped to user."""
+        return await self.external_ingestion.get_ingest_job(user_id=user_id, job_id=job_id)
 
     async def _internal_search(self, query: str, user_id: str) -> List[Dict[str, Any]]:
         """Run hybrid search against user's ES index."""
@@ -408,23 +480,51 @@ class AssistantService:
             logger.error(f"Internal search failed: {e}")
             return []
 
-    async def _external_search(self, query: str) -> List[Dict[str, Any]]:
-        """Run external web search via Tavily."""
+    async def _external_search(
+        self,
+        query: str,
+        provider: str = "auto",
+        max_results: Optional[int] = None,
+        time_range: Optional[str] = None,
+        language: Optional[str] = None,
+        engines: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Run external search via provider router (SearXNG/Tavily)."""
         try:
-            from app.services.ai.web_search import WebSearchClient
-
-            client = WebSearchClient()
-            if not client.available:
-                return []
-
-            results = await client.search(query, max_results=5)
-            for item in results:
-                item["origin"] = "external"
-                item["source_name"] = "Web"
-            return results
+            effective_max_results = max_results or settings.external_search_default_limit
+            execution = await self.external_search_router.search(
+                request=ExternalSearchQuery(
+                    query=query,
+                    max_results=effective_max_results,
+                    time_range=time_range,
+                    language=language,
+                    engines=engines,
+                ),
+                provider=provider,
+            )
+            return {
+                "provider_used": execution.provider_used,
+                "fallback_used": execution.fallback_used,
+                "results": [
+                    {
+                        "title": item.title,
+                        "url": item.url,
+                        "description": item.description,
+                        "content": item.content,
+                        "score": item.score,
+                        "source_name": item.source_name or "Web",
+                        "origin": "external",
+                        "provider": item.provider or execution.provider_used,
+                        "engine": item.engine,
+                        "published_at": item.published_at,
+                        "metadata": item.metadata,
+                    }
+                    for item in execution.results
+                ],
+            }
         except Exception as e:
             logger.error(f"External search failed: {e}")
-            return []
+            return {"provider_used": provider, "fallback_used": False, "results": []}
 
     def _rrf_merge(
         self,

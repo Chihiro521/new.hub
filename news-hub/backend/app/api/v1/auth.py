@@ -9,6 +9,7 @@ from datetime import datetime
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from loguru import logger
 
 from app.core.deps import get_current_user
 from app.core.security import (
@@ -73,7 +74,11 @@ async def register(user_data: UserCreate, db: AsyncIOMotorDatabase = Depends(get
     user_id = str(result.inserted_id)
 
     # Create user's Elasticsearch index
-    await es_client.ensure_user_index(user_id)
+    try:
+        if es_client.client is not None:
+            await es_client.ensure_user_index(user_id)
+    except Exception as e:
+        logger.warning(f"Skipping user index creation for {user_id}: {e}")
 
     # Build response
     user_response = UserResponse(

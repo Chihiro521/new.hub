@@ -1,0 +1,15 @@
+use_default_settings: true
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  secret_key: "news-hub-dev-searxng-secret-key"
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json
+
+redis:
+  url: redis://searxng-redis:6379/0

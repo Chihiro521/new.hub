@@ -1,14 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
 import { useSourceStore } from '@/stores/sources'
 import type { SourceResponse, SourceStatus } from '@/api/sources'
 import AddSourceModal from '@/components/AddSourceModal.vue'
 import CrawlerLogs from '@/components/CrawlerLogs.vue'
 
-const router = useRouter()
-const authStore = useAuthStore()
 const sourceStore = useSourceStore()
 
 const showAddModal = ref(false)
@@ -18,11 +14,6 @@ const filterStatus = ref<SourceStatus | ''>('')
 onMounted(() => {
   sourceStore.fetchSources()
 })
-
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-}
 
 function getStatusColor(status: SourceStatus): string {
   switch (status) {
@@ -89,30 +80,6 @@ function handleSourceAdded() {
 
 <template>
   <div class="sources-page">
-    <!-- Background -->
-    <div class="bg-decoration">
-      <div class="circle circle-1"></div>
-      <div class="circle circle-2"></div>
-    </div>
-
-    <!-- Header -->
-    <header class="header glass">
-      <div class="header-left">
-        <h1 class="logo gradient-text">News Hub</h1>
-        <nav class="nav">
-          <router-link to="/" class="nav-link">首页</router-link>
-          <router-link to="/sources" class="nav-link active">订阅源</router-link>
-          <router-link to="/search" class="nav-link">搜索</router-link>
-          <router-link to="/settings" class="nav-link">设置</router-link>
-          <router-link to="/assistant" class="nav-link">AI 助手</router-link>
-        </nav>
-      </div>
-      <div class="user-menu">
-        <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
-      </div>
-    </header>
-
     <!-- Main -->
     <main class="main-content">
       <!-- Page header -->
@@ -242,102 +209,7 @@ function handleSourceAdded() {
 
 <style scoped>
 .sources-page {
-  min-height: 100vh;
   position: relative;
-}
-
-/* Background */
-.bg-decoration {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.circle {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.3;
-}
-
-.circle-1 {
-  width: 500px;
-  height: 500px;
-  background: var(--color-primary-200);
-  top: -150px;
-  right: -100px;
-}
-
-.circle-2 {
-  width: 400px;
-  height: 400px;
-  background: var(--color-secondary-200);
-  bottom: -100px;
-  left: -100px;
-}
-
-/* Header */
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-4) var(--space-8);
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-}
-
-.logo {
-  font-family: var(--font-display);
-  font-size: var(--text-2xl);
-  font-weight: 700;
-}
-
-.nav {
-  display: flex;
-  gap: var(--space-4);
-}
-
-.nav-link {
-  color: var(--color-neutral-600);
-  text-decoration: none;
-  font-weight: 500;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
-}
-
-.nav-link:hover {
-  color: var(--color-primary-600);
-  background: var(--color-primary-50);
-}
-
-.nav-link.active {
-  color: var(--color-primary-600);
-  background: var(--color-primary-100);
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.username {
-  color: var(--color-neutral-600);
-  font-weight: 500;
-}
-
-.logout-btn {
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-sm);
 }
 
 /* Main */

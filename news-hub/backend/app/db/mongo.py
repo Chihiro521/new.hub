@@ -84,6 +84,16 @@ class MongoDB:
         """Tag rules collection."""
         return self.db.tag_rules
 
+    @property
+    def external_search_sessions(self):
+        """External search staging sessions collection."""
+        return self.db.external_search_sessions
+
+    @property
+    def ingest_jobs(self):
+        """Asynchronous ingestion job tracking collection."""
+        return self.db.ingest_jobs
+
     async def create_indexes(self) -> None:
         """
         Create database indexes for optimal query performance.
@@ -107,6 +117,12 @@ class MongoDB:
         await self.news.create_index([("user_id", 1), ("published_at", -1)])
         await self.news.create_index([("user_id", 1), ("crawled_at", -1)])
         await self.news.create_index([("user_id", 1), ("is_starred", 1)])
+        await self.news.create_index(
+            [("user_id", 1), ("metadata.extra.url_hash", 1)],
+            unique=True,
+            partialFilterExpression={"metadata.extra.url_hash": {"$type": "string"}},
+        )
+        await self.news.create_index([("user_id", 1), ("metadata.extra.provider", 1)])
         await self.news.create_index("tags")
 
         # Tag rules indexes
@@ -114,6 +130,15 @@ class MongoDB:
         await self.tag_rules.create_index(
             [("user_id", 1), ("tag_name", 1)], unique=True
         )
+
+        # External search session indexes
+        await self.external_search_sessions.create_index(
+            [("user_id", 1), ("created_at", -1)]
+        )
+
+        # Ingest job indexes
+        await self.ingest_jobs.create_index([("user_id", 1), ("created_at", -1)])
+        await self.ingest_jobs.create_index([("status", 1), ("updated_at", -1)])
 
         logger.info("MongoDB indexes created")
 

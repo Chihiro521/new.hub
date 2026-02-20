@@ -1,20 +1,11 @@
 <script setup lang="ts">
 import { ref, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
 import { useAssistantStore } from '@/stores/assistant'
 
-const router = useRouter()
-const authStore = useAuthStore()
 const assistantStore = useAssistantStore()
 
 const userInput = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
-
-function handleLogout() {
-  authStore.logout()
-  router.push('/login')
-}
 
 async function handleSend() {
   const content = userInput.value.trim()
@@ -60,23 +51,6 @@ function usePrompt(prompt: string) {
 
 <template>
   <div class="assistant-page">
-    <!-- Header -->
-    <header class="header glass">
-      <div class="header-left">
-        <h1 class="logo gradient-text">News Hub</h1>
-        <nav class="nav">
-          <router-link to="/" class="nav-link">首页</router-link>
-          <router-link to="/sources" class="nav-link">订阅源</router-link>
-          <router-link to="/search" class="nav-link">搜索</router-link>
-          <router-link to="/assistant" class="nav-link active">AI 助手</router-link>
-        </nav>
-      </div>
-      <div class="user-menu">
-        <span class="username">{{ authStore.username }}</span>
-        <button class="btn-secondary logout-btn" @click="handleLogout">退出</button>
-      </div>
-    </header>
-
     <main class="main-content">
       <div class="chat-container glass">
         <!-- Messages Area -->
@@ -165,74 +139,9 @@ function usePrompt(prompt: string) {
 
 <style scoped>
 .assistant-page {
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
   background: var(--color-bg-canvas);
-}
-
-/* Header (Shared) */
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 2rem;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--color-neutral-200);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-}
-
-.logo {
-  font-family: var(--font-display);
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.nav {
-  display: flex;
-  gap: 1rem;
-}
-
-.nav-link {
-  color: var(--color-neutral-600);
-  text-decoration: none;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  transition: all 0.2s;
-}
-
-.nav-link:hover, .nav-link.active {
-  background: rgba(255, 255, 255, 0.5);
-  color: var(--color-primary-600);
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.username {
-  color: var(--color-neutral-600);
-  font-weight: 500;
-}
-
-.logout-btn {
-  padding: 0.5rem 1rem;
-  font-size: 0.9rem;
-  border: 1px solid var(--color-neutral-200);
-  border-radius: 0.5rem;
-  background: transparent;
-  cursor: pointer;
 }
 
 /* Main Content */
@@ -464,7 +373,6 @@ textarea {
 }
 
 /* Dark Mode Overrides */
-[data-theme="dark"] .header,
 [data-theme="dark"] .input-area {
   background: rgba(30, 30, 30, 0.8);
   border-color: var(--color-neutral-700);
