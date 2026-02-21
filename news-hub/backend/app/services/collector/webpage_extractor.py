@@ -1,45 +1,68 @@
-"""Webpage extractor using crawl4ai for JS-rendered full-text extraction."""
+"""Webpage extractor using Crawl4AI Docker REST API.
+
+Features:
+- Calls Crawl4AI Docker service via HTTP for JS-rendered extraction
+- fit_markdown for LLM-ready clean output
+- Batch extraction via multi-URL POST
+- Overlay/popup removal, social link stripping
+- Falls back to httpx + BeautifulSoup when Crawl4AI is unavailable
+"""
 
 from __future__ import annotations
 
 import hashlib
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+import httpx
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 from loguru import logger
 
-# Module-level crawler instance (lazy-init to avoid startup cost)
-_crawler_instance = None
-_crawler_lock = None
+from app.core.config import settings
 
+# Crawl4AI Docker API: browser_config with stealth for anti-bot bypass
+_BROWSER_CONFIG = {
+    "type": "BrowserConfig",
+    "params": {
+        "headless": True,
+        "light_mode": True,
+        "enable_stealth": True,
+        "user_agent_mode": "random",
+        "extra_args": ["--disable-blink-features=AutomationControlled"],
+    },
+}
 
-async def _get_crawler():
-    """Get or create the module-level AsyncWebCrawler instance."""
-    global _crawler_instance, _crawler_lock
-    import asyncio
-
-    if _crawler_lock is None:
-        _crawler_lock = asyncio.Lock()
-
-    async with _crawler_lock:
-        if _crawler_instance is None:
-            from crawl4ai import AsyncWebCrawler, BrowserConfig
-
-            browser_cfg = BrowserConfig(
-                headless=True,
-                text_mode=True,
-            )
-            _crawler_instance = AsyncWebCrawler(config=browser_cfg)
-            await _crawler_instance.start()
-            logger.info("crawl4ai AsyncWebCrawler initialized")
-        return _crawler_instance
+# Crawl4AI Docker API: crawler_config with PruningContentFilter for fit_markdown
+_CRAWLER_CONFIG = {
+    "type": "CrawlerRunConfig",
+    "params": {
+        "word_count_threshold": 10,
+        "excluded_tags": ["nav", "footer", "aside", "header", "form", "noscript"],
+        "exclude_social_media_links": True,
+        "remove_overlay_elements": True,
+        "page_timeout": 30000,
+        "cache_mode": "bypass",
+        "markdown_generator": {
+            "type": "DefaultMarkdownGenerator",
+            "params": {
+                "content_filter": {
+                    "type": "PruningContentFilter",
+                    "params": {
+                        "threshold": 0.1,
+                        "threshold_type": "fixed",
+                        "min_word_threshold": 1,
+                    },
+                },
+            },
+        },
+    },
+}
 
 
 class WebpageExtractor:
-    """Full-text extraction powered by crawl4ai (Playwright-based)."""
+    """Full-text extraction powered by Crawl4AI Docker REST API."""
 
     DATE_META_KEYS = [
         "article:published_time",
@@ -50,44 +73,88 @@ class WebpageExtractor:
     ]
 
     async def extract(self, url: str) -> Dict[str, Any]:
-        """Extract structured content from a webpage URL using crawl4ai."""
+        """Extract structured content from a webpage URL.
+
+        Tries Crawl4AI Docker API first, falls back to httpx + BeautifulSoup.
+        """
         try:
-            return await self._crawl_and_extract(url)
+            result = await self._crawl_via_api(url)
+            if result and result.get("content"):
+                return result
         except Exception as e:
-            logger.warning(f"crawl4ai extraction failed for {url}: {e}")
+            logger.warning(f"Crawl4AI API extraction failed for {url}: {e}")
+
+        # Fallback: simple HTTP fetch + BeautifulSoup
+        try:
+            return await self._fallback_extract(url)
+        except Exception as e:
+            logger.warning(f"Fallback extraction also failed for {url}: {e}")
             return {}
 
-    async def _crawl_and_extract(self, url: str) -> Dict[str, Any]:
-        from crawl4ai import CrawlerRunConfig
+    async def _crawl_via_api(self, url: str) -> Dict[str, Any]:
+        """Call Crawl4AI Docker REST API to crawl a single URL."""
+        base_url = settings.crawl4ai_base_url.rstrip("/")
+        headers = {"Content-Type": "application/json"}
+        if settings.crawl4ai_api_token:
+            headers["Authorization"] = f"Bearer {settings.crawl4ai_api_token}"
 
-        crawler = await _get_crawler()
-        run_cfg = CrawlerRunConfig(
-            excluded_tags=["nav", "footer", "aside"],
-            word_count_threshold=10,
-        )
-        result = await crawler.arun(url=url, config=run_cfg)
+        payload = {
+            "urls": [url],
+            "browser_config": _BROWSER_CONFIG,
+            "crawler_config": _CRAWLER_CONFIG,
+        }
 
-        if not result.success:
-            logger.warning(f"crawl4ai returned failure for {url}: {result.error_message}")
+        logger.debug(f"[crawl4ai-api] POST {base_url}/crawl for {url}")
+        async with httpx.AsyncClient(timeout=settings.crawl4ai_timeout) as client:
+            resp = await client.post(f"{base_url}/crawl", json=payload, headers=headers)
+            resp.raise_for_status()
+
+        data = resp.json()
+        if not data.get("success") or not data.get("results"):
+            logger.warning(f"Crawl4AI API returned no results for {url}")
             return {}
 
-        # Extract markdown content (prefer fit_markdown for cleaner output)
-        content = ""
-        if result.markdown:
-            content = getattr(result.markdown, "fit_markdown", None) or ""
-            if not content:
-                content = str(result.markdown) if result.markdown else ""
+        item = data["results"][0]
+        if not item.get("success"):
+            logger.warning(f"Crawl4AI crawl failed for {url}: {item.get('error_message')}")
+            return {}
 
-        # Parse HTML for OG metadata
-        html = result.html or result.cleaned_html or ""
+        # Detect server-side blocks: status 403/429/5xx AND no real content
+        status_code = item.get("status_code", 200)
+        content = self._pick_markdown(item)
+        if status_code in (403, 429, 451, 503) and len(content) < 100:
+            logger.warning(
+                f"Crawl4AI got HTTP {status_code} with no useful content for {url}"
+            )
+            return {}
+
+        # Extract markdown content
+        logger.debug(f"[crawl4ai-api] extracted {len(content)} chars for {url}")
+
+        # Prefer metadata from API response, fallback to HTML parsing
+        meta = item.get("metadata") or {}
+        html = item.get("html") or item.get("cleaned_html") or ""
         soup = BeautifulSoup(html, "html.parser") if html else None
 
-        title = self._extract_title(soup) if soup else ""
-        description = self._extract_description(soup, content) if soup else content[:500]
-        published_at = self._extract_published_at(soup) if soup else None
-        author = self._extract_author(soup) if soup else None
-        image_url = self._extract_image(soup) if soup else None
-        canonical_url = self._extract_canonical_url(soup, url) if soup else self.normalize_url(url)
+        title = (
+            meta.get("og:title") or meta.get("title") or ""
+        ).strip() or (self._extract_title(soup) if soup else "")
+        description = (
+            meta.get("og:description") or meta.get("description") or ""
+        ).strip()[:500] or (self._extract_description(soup, content) if soup else content[:500])
+        published_at = self._parse_date(meta.get("article:published_time")) or (
+            self._extract_published_at(soup) if soup else None
+        )
+        author = (
+            meta.get("article:author") or meta.get("author") or ""
+        ).strip()[:100] or (self._extract_author(soup) if soup else None)
+        image_url = (
+            meta.get("og:image") or ""
+        ).strip() or (self._extract_image(soup) if soup else None)
+        canonical_url = (
+            meta.get("og:url") or ""
+        ).strip() or (self._extract_canonical_url(soup, url) if soup else self.normalize_url(url))
+        canonical_url = self.normalize_url(canonical_url)
         quality_score = self._quality_score(content, title, description)
 
         return {
@@ -101,6 +168,170 @@ class WebpageExtractor:
             "url_hash": self.url_hash(canonical_url),
             "quality_score": quality_score,
         }
+
+    @staticmethod
+    def _pick_markdown(item: dict) -> str:
+        """Pick best markdown from Crawl4AI API response item.
+
+        The API returns markdown as either:
+        - a dict with keys: raw_markdown, fit_markdown, markdown_with_citations
+        - or a plain string
+        """
+        md = item.get("markdown", "")
+        if isinstance(md, dict):
+            fit = (md.get("fit_markdown") or "").strip()
+            if fit and len(fit) > 50:
+                return fit
+            raw = (md.get("raw_markdown") or "").strip()
+            return raw if raw else ""
+        # Plain string fallback
+        fit = (item.get("fit_markdown") or "").strip()
+        if fit and len(fit) > 50:
+            return fit
+        return (str(md) if md else "").strip()
+
+    _FALLBACK_UAS = [
+        # Mobile UA — many sites (Zhihu, Weibo) are less strict on mobile
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        # Desktop UA
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    ]
+
+    async def _fallback_extract(self, url: str) -> Dict[str, Any]:
+        """Lightweight fallback: httpx GET + BeautifulSoup text extraction.
+
+        Tries mobile UA first (less anti-bot), then desktop UA.
+        """
+        last_err: Optional[Exception] = None
+        for ua in self._FALLBACK_UAS:
+            try:
+                logger.debug(f"[fallback] httpx 抓取: {url} (UA={ua[:30]}...)")
+                async with httpx.AsyncClient(
+                    follow_redirects=True, timeout=15.0,
+                    headers={"User-Agent": ua},
+                ) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                html = resp.text
+                break
+            except httpx.HTTPStatusError as e:
+                last_err = e
+                logger.debug(f"[fallback] HTTP {e.response.status_code} with UA={ua[:30]}...")
+                continue
+        else:
+            raise last_err or RuntimeError(f"All fallback UAs failed for {url}")
+        soup = BeautifulSoup(html, "html.parser")
+
+        for tag in soup.find_all(["nav", "footer", "aside", "header", "script", "style", "noscript"]):
+            tag.decompose()
+
+        article = (
+            soup.find("article")
+            or soup.find("div", class_=lambda c: c and any(k in (c if isinstance(c, str) else " ".join(c)) for k in ["article", "content", "post-body", "entry"]))
+            or soup.find("main")
+        )
+        text_source = article if article else soup.body or soup
+
+        paragraphs = []
+        for p in text_source.find_all(["p", "h1", "h2", "h3", "h4", "li"]):
+            text = p.get_text(strip=True)
+            if len(text) > 15:
+                if p.name and p.name.startswith("h"):
+                    paragraphs.append(f"## {text}")
+                else:
+                    paragraphs.append(text)
+        content = "\n\n".join(paragraphs)
+
+        title = self._extract_title(soup)
+        description = self._extract_description(soup, content)
+        published_at = self._extract_published_at(soup)
+        author = self._extract_author(soup)
+        image_url = self._extract_image(soup)
+        canonical_url = self._extract_canonical_url(soup, url)
+        quality_score = self._quality_score(content, title, description)
+
+        return {
+            "title": title,
+            "description": description,
+            "content": content,
+            "author": author,
+            "image_url": image_url,
+            "published_at": published_at,
+            "canonical_url": canonical_url,
+            "url_hash": self.url_hash(canonical_url),
+            "quality_score": quality_score,
+        }
+
+    async def batch_extract(self, urls: List[str]) -> List[Tuple[str, Dict[str, Any]]]:
+        """Batch-extract multiple URLs via Crawl4AI Docker API.
+
+        Returns list of (url, extracted_dict) tuples.
+        """
+        if not urls:
+            return []
+
+        base_url = settings.crawl4ai_base_url.rstrip("/")
+        headers = {"Content-Type": "application/json"}
+        if settings.crawl4ai_api_token:
+            headers["Authorization"] = f"Bearer {settings.crawl4ai_api_token}"
+
+        payload = {
+            "urls": urls,
+            "browser_config": _BROWSER_CONFIG,
+            "crawler_config": _CRAWLER_CONFIG,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=settings.crawl4ai_timeout * 2) as client:
+                resp = await client.post(f"{base_url}/crawl", json=payload, headers=headers)
+                resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.error(f"Batch crawl API failed: {e}")
+            return [(url, {}) for url in urls]
+
+        if not data.get("success") or not data.get("results"):
+            return [(url, {}) for url in urls]
+
+        output: List[Tuple[str, Dict[str, Any]]] = []
+        for item in data["results"]:
+            item_url = item.get("url", "")
+            if not item.get("success"):
+                logger.warning(f"Batch item failed ({item_url}): {item.get('error_message')}")
+                output.append((item_url, {}))
+                continue
+
+            try:
+                content = self._pick_markdown(item)
+                html = item.get("html") or item.get("cleaned_html") or ""
+                soup = BeautifulSoup(html, "html.parser") if html else None
+
+                title = self._extract_title(soup) if soup else ""
+                description = self._extract_description(soup, content) if soup else content[:500]
+                published_at = self._extract_published_at(soup) if soup else None
+                author = self._extract_author(soup) if soup else None
+                image_url = self._extract_image(soup) if soup else None
+                canonical_url = self._extract_canonical_url(soup, item_url) if soup else self.normalize_url(item_url)
+                quality_score = self._quality_score(content, title, description)
+
+                output.append((item_url, {
+                    "title": title,
+                    "description": description,
+                    "content": content,
+                    "author": author,
+                    "image_url": image_url,
+                    "published_at": published_at,
+                    "canonical_url": canonical_url,
+                    "url_hash": self.url_hash(canonical_url),
+                    "quality_score": quality_score,
+                }))
+            except Exception as e:
+                logger.warning(f"Batch post-processing failed for {item_url}: {e}")
+                output.append((item_url, {}))
+
+        return output
 
     def _extract_title(self, soup: BeautifulSoup) -> str:
         if soup.title and soup.title.string:
@@ -128,11 +359,19 @@ class WebpageExtractor:
             )
             if not meta or not meta.get("content"):
                 continue
-            try:
-                return date_parser.parse(str(meta["content"]))
-            except Exception:
-                continue
+            dt = self._parse_date(str(meta["content"]))
+            if dt:
+                return dt
         return None
+
+    @staticmethod
+    def _parse_date(value: Optional[str]) -> Optional[datetime]:
+        if not value or not value.strip():
+            return None
+        try:
+            return date_parser.parse(value.strip())
+        except Exception:
+            return None
 
     def _extract_author(self, soup: BeautifulSoup) -> Optional[str]:
         for attrs in [
@@ -178,7 +417,6 @@ class WebpageExtractor:
 
     @classmethod
     def normalize_url(cls, url: str) -> str:
-        """Normalize URL for deduplication and hash computation."""
         parsed = urlparse(url)
         scheme = parsed.scheme.lower() or "https"
         netloc = parsed.netloc.lower()

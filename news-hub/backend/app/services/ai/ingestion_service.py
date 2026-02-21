@@ -147,62 +147,140 @@ class ExternalIngestionService:
         failed_urls: List[str] = []
 
         try:
-            tasks = [
-                asyncio.create_task(
-                    self._process_single_item(
-                        user_id=job["user_id"],
-                        provider=provider,
-                        persist_mode=persist_mode,
-                        item=item,
+            if persist_mode == "enriched" and len(results) > 1:
+                # Use batch crawling for efficiency
+                urls = [str(item.get("url") or "") for item in results]
+                url_to_item = {str(item.get("url") or ""): item for item in results}
+
+                batch_results = await self.extractor.batch_extract(
+                    [u for u in urls if u]
+                )
+                url_to_enriched = {url: data for url, data in batch_results}
+
+                for item in results:
+                    url = str(item.get("url") or "")
+                    enriched = url_to_enriched.get(url, {})
+                    ingest_item = item.copy()
+
+                    if enriched:
+                        ingest_item.update(
+                            {
+                                "title": enriched.get("title") or ingest_item.get("title"),
+                                "description": enriched.get("description")
+                                or ingest_item.get("description", ""),
+                                "content": enriched.get("content")
+                                or ingest_item.get("content", ""),
+                                "image_url": enriched.get("image_url")
+                                or ingest_item.get("image_url"),
+                                "author": enriched.get("author")
+                                or ingest_item.get("author"),
+                                "published_at": enriched.get("published_at")
+                                or ingest_item.get("published_at"),
+                            }
+                        )
+                        meta = ingest_item.setdefault("metadata", {})
+                        meta["canonical_url"] = enriched.get("canonical_url")
+                        meta["url_hash"] = enriched.get("url_hash")
+                        qs = float(enriched.get("quality_score") or 0.0)
+                        meta["quality_score"] = qs
+                        quality_sum += qs
+                        quality_count += 1
+                    else:
+                        failed += 1
+                        if url and len(failed_urls) < 100:
+                            failed_urls.append(url)
+                        processed += 1
+                        continue
+
+                    try:
+                        inserted = await VirtualSourceManager.ingest_results(
+                            user_id=job["user_id"],
+                            provider=provider,
+                            items=[ingest_item],
+                        )
+                        stored += int(inserted)
+                    except Exception as e:
+                        logger.warning(f"Ingest item failed ({url}): {e}")
+                        failed += 1
+                        if url and len(failed_urls) < 100:
+                            failed_urls.append(url)
+
+                    processed += 1
+                    avg_quality_score = (
+                        round(quality_sum / quality_count, 3) if quality_count > 0 else 0.0
                     )
-                )
-                for item in results
-            ]
+                    await mongodb.db.ingest_jobs.update_one(
+                        {"_id": oid},
+                        {
+                            "$set": {
+                                "processed_items": processed,
+                                "stored_items": stored,
+                                "failed_items": failed,
+                                "retry_count": retry_count,
+                                "average_quality_score": avg_quality_score,
+                                "failed_urls": failed_urls,
+                                "updated_at": datetime.utcnow(),
+                            }
+                        },
+                    )
+            else:
+                # Original per-item processing (snippet mode or single item)
+                tasks = [
+                    asyncio.create_task(
+                        self._process_single_item(
+                            user_id=job["user_id"],
+                            provider=provider,
+                            persist_mode=persist_mode,
+                            item=item,
+                        )
+                    )
+                    for item in results
+                ]
 
-            for task in asyncio.as_completed(tasks):
-                try:
-                    item_result = await task
-                except Exception as e:
-                    logger.warning(f"Ingest worker task failed: {e}")
-                    item_result = {
-                        "stored": 0,
-                        "failed": 1,
-                        "retry_count": 0,
-                        "quality_score": None,
-                        "failed_url": None,
-                    }
-
-                processed += 1
-                stored += int(item_result.get("stored", 0))
-                failed += int(item_result.get("failed", 0))
-                retry_count += int(item_result.get("retry_count", 0))
-
-                quality_score = item_result.get("quality_score")
-                if quality_score is not None:
-                    quality_sum += float(quality_score)
-                    quality_count += 1
-
-                failed_url = item_result.get("failed_url")
-                if failed_url and len(failed_urls) < 100:
-                    failed_urls.append(str(failed_url))
-
-                avg_quality_score = (
-                    round(quality_sum / quality_count, 3) if quality_count > 0 else 0.0
-                )
-                await mongodb.db.ingest_jobs.update_one(
-                    {"_id": oid},
-                    {
-                        "$set": {
-                            "processed_items": processed,
-                            "stored_items": stored,
-                            "failed_items": failed,
-                            "retry_count": retry_count,
-                            "average_quality_score": avg_quality_score,
-                            "failed_urls": failed_urls,
-                            "updated_at": datetime.utcnow(),
+                for task in asyncio.as_completed(tasks):
+                    try:
+                        item_result = await task
+                    except Exception as e:
+                        logger.warning(f"Ingest worker task failed: {e}")
+                        item_result = {
+                            "stored": 0,
+                            "failed": 1,
+                            "retry_count": 0,
+                            "quality_score": None,
+                            "failed_url": None,
                         }
-                    },
-                )
+
+                    processed += 1
+                    stored += int(item_result.get("stored", 0))
+                    failed += int(item_result.get("failed", 0))
+                    retry_count += int(item_result.get("retry_count", 0))
+
+                    quality_score = item_result.get("quality_score")
+                    if quality_score is not None:
+                        quality_sum += float(quality_score)
+                        quality_count += 1
+
+                    failed_url = item_result.get("failed_url")
+                    if failed_url and len(failed_urls) < 100:
+                        failed_urls.append(str(failed_url))
+
+                    avg_quality_score = (
+                        round(quality_sum / quality_count, 3) if quality_count > 0 else 0.0
+                    )
+                    await mongodb.db.ingest_jobs.update_one(
+                        {"_id": oid},
+                        {
+                            "$set": {
+                                "processed_items": processed,
+                                "stored_items": stored,
+                                "failed_items": failed,
+                                "retry_count": retry_count,
+                                "average_quality_score": avg_quality_score,
+                                "failed_urls": failed_urls,
+                                "updated_at": datetime.utcnow(),
+                            }
+                        },
+                    )
 
             avg_quality_score = (
                 round(quality_sum / quality_count, 3) if quality_count > 0 else 0.0

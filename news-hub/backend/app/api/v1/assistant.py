@@ -14,6 +14,9 @@ from app.db.mongo import mongodb
 from app.schemas.assistant import (
     AugmentedSearchRequest,
     AugmentedSearchResponseData,
+    BatchIngestAllRequest,
+    BatchIngestAllResponseData,
+    BatchIngestItemResult,
     ChatRequest,
     ChatResponseData,
     ClassifyRequest,
@@ -366,6 +369,205 @@ async def external_search(
     )
 
 
+# === Ingest One with SSE progress tracking ===
+
+
+@router.post("/ingest-one-stream")
+async def ingest_one_stream(
+    request: IngestOneRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Crawl and ingest a single URL with real-time SSE progress tracking."""
+    import time as _time
+
+    from app.services.ai.virtual_source import VirtualSourceManager
+    from app.services.collector.webpage_extractor import WebpageExtractor
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        def emit(step: str, status: str, message: str, detail: dict = None, elapsed_ms: int = 0):
+            payload = {"step": step, "status": status, "message": message, "elapsed_ms": elapsed_ms}
+            if detail:
+                payload["detail"] = detail
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        t_total = _time.monotonic()
+        extracted = {}
+        crawl_method = "crawl4ai"
+        extractor = WebpageExtractor()
+
+        # Step 1: Health check Crawl4AI Docker service
+        yield emit("crawler_init", "running", "检查 Crawl4AI 服务...")
+        t0 = _time.monotonic()
+        try:
+            import httpx as _httpx
+            from app.core.config import settings as _settings
+            async with _httpx.AsyncClient(timeout=5) as _client:
+                _health = await _client.get(f"{_settings.crawl4ai_base_url.rstrip('/')}/health")
+                _health.raise_for_status()
+            ms = int((_time.monotonic() - t0) * 1000)
+            yield emit("crawler_init", "done", "Crawl4AI 服务就绪", elapsed_ms=ms)
+        except Exception as e:
+            ms = int((_time.monotonic() - t0) * 1000)
+            yield emit("crawler_init", "warn", f"Crawl4AI 服务不可用: {e}, 将使用备用方案", elapsed_ms=ms)
+
+        # Step 2: Page fetch via Crawl4AI API
+        yield emit("page_fetch", "running", f"crawl4ai 抓取: {request.url[:80]}...")
+        t0 = _time.monotonic()
+        crawl4ai_ok = False
+        content = ""
+        md_source = ""
+        try:
+            extracted = await asyncio.wait_for(
+                extractor._crawl_via_api(request.url), timeout=30.0
+            )
+            ms = int((_time.monotonic() - t0) * 1000)
+            if extracted and extracted.get("content"):
+                content = extracted["content"]
+                md_source = "crawl4ai_api"
+                crawl4ai_ok = True
+                yield emit("page_fetch", "done", f"页面抓取完成 ({len(content)} chars)", detail={
+                    "content_length": len(content),
+                }, elapsed_ms=ms)
+            else:
+                yield emit("page_fetch", "warn", "crawl4ai 未提取到内容, 尝试备用方案...", elapsed_ms=ms)
+        except asyncio.TimeoutError:
+            ms = int((_time.monotonic() - t0) * 1000)
+            yield emit("page_fetch", "warn", f"crawl4ai 超时 ({ms}ms), 尝试备用方案...", elapsed_ms=ms)
+        except Exception as e:
+            ms = int((_time.monotonic() - t0) * 1000)
+            yield emit("page_fetch", "warn", f"crawl4ai 异常: {type(e).__name__}: {e}, 尝试备用方案...", elapsed_ms=ms)
+
+        # Step 2b: Fallback to httpx if crawl4ai failed
+        if not crawl4ai_ok:
+            yield emit("fallback_fetch", "running", "httpx 备用抓取...")
+            t0 = _time.monotonic()
+            try:
+                fallback_result = await asyncio.wait_for(
+                    extractor._fallback_extract(request.url), timeout=15.0
+                )
+                ms = int((_time.monotonic() - t0) * 1000)
+                if fallback_result and fallback_result.get("content"):
+                    extracted = fallback_result
+                    content = fallback_result["content"]
+                    md_source = "httpx_fallback"
+                    yield emit("fallback_fetch", "done", f"备用抓取完成 ({len(content)} chars)", elapsed_ms=ms)
+                    crawl_method = "httpx_fallback"
+                else:
+                    yield emit("fallback_fetch", "warn", "备用抓取也未获取到正文", elapsed_ms=ms)
+                    crawl_method = "all_failed"
+            except Exception as e:
+                ms = int((_time.monotonic() - t0) * 1000)
+                yield emit("fallback_fetch", "error", f"备用抓取也失败: {e}", elapsed_ms=ms)
+                crawl_method = "all_failed"
+
+        # Step 3: Content summary
+        if content:
+            yield emit("markdown_extract", "done", f"Markdown: {len(content)} 字符 (来源: {md_source})", detail={
+                "content_length": len(content),
+                "source": md_source,
+            })
+        else:
+            yield emit("markdown_extract", "warn", "未提取到正文内容")
+
+        # Step 4: Metadata (already extracted by _crawl_via_api or _fallback_extract)
+        title = extracted.get("title", "")
+        description = extracted.get("description", "")
+        author = extracted.get("author")
+        image_url = extracted.get("image_url")
+        published_at = extracted.get("published_at")
+        quality_score = extracted.get("quality_score", 0.0)
+
+        if extracted:
+            yield emit("metadata_parse", "done", "元数据解析完成", detail={
+                "title": title[:80] if title else "(空)",
+                "author": author,
+                "has_image": bool(image_url),
+                "has_date": bool(published_at),
+            })
+
+        # Step 5: Quality scoring
+        if content or title:
+            yield emit("quality_check", "done", f"质量评分: {quality_score}", detail={
+                "quality_score": quality_score,
+                "content_length": len(content),
+                "has_title": bool(title),
+                "has_description": bool(description),
+            })
+
+        # Fallback to request data if extraction failed
+        if not title:
+            title = request.title or request.url
+        if not description:
+            description = request.description or ""
+
+        # Step 6: Database insert
+        yield emit("db_insert", "running", "写入数据库...")
+        t0 = _time.monotonic()
+        try:
+            item = {
+                "title": title,
+                "url": request.url,
+                "description": description,
+                "content": content,
+                "image_url": image_url,
+                "published_at": published_at,
+                "author": author or "",
+                "score": quality_score,
+            }
+            stored = await VirtualSourceManager.ingest_results(
+                user_id=current_user.id,
+                provider=request.provider,
+                items=[item],
+            )
+            ms = int((_time.monotonic() - t0) * 1000)
+
+            news_id = None
+            if stored > 0:
+                doc = await mongodb.db.news.find_one(
+                    {"user_id": current_user.id, "url": request.url},
+                    sort=[("created_at", -1)],
+                )
+                news_id = str(doc["_id"]) if doc else None
+                yield emit("db_insert", "done", f"入库成功 (news_id: {news_id})", detail={
+                    "news_id": news_id, "stored": stored,
+                }, elapsed_ms=ms)
+            else:
+                yield emit("db_insert", "warn", "文章已存在或入库失败", detail={
+                    "stored": 0,
+                }, elapsed_ms=ms)
+        except Exception as e:
+            ms = int((_time.monotonic() - t0) * 1000)
+            yield emit("db_insert", "error", f"数据库写入失败: {e}", elapsed_ms=ms)
+            news_id = None
+            stored = 0
+
+        # Step 7: Complete
+        total_ms = int((_time.monotonic() - t_total) * 1000)
+        pub_at = published_at
+        yield emit("complete", "done" if (stored and stored > 0) else "warn", "入库流程完成", detail={
+            "success": bool(stored and stored > 0),
+            "news_id": news_id,
+            "quality_score": quality_score,
+            "crawl_method": crawl_method,
+            "title": title[:100],
+            "content_length": len(content),
+            "author": author,
+            "image_url": image_url,
+            "published_at": pub_at.isoformat() if hasattr(pub_at, "isoformat") else (str(pub_at) if pub_at else None),
+            "content_preview": content[:500] if content else "",
+        }, elapsed_ms=total_ms)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # === Ingest One (crawl + persist single URL) ===
 
 
@@ -385,14 +587,20 @@ async def ingest_one(
 
     # Crawl with 15s timeout; fallback to snippet on failure
     extracted = {}
+    crawl_method = "crawl4ai"
     try:
         extracted = await asyncio.wait_for(
             extractor.extract(request.url), timeout=15.0
         )
     except asyncio.TimeoutError:
         logger.warning(f"Crawl timeout for {request.url}, falling back to snippet")
+        crawl_method = "snippet_timeout"
     except Exception as e:
         logger.warning(f"Crawl failed for {request.url}: {e}")
+        crawl_method = "snippet_error"
+
+    if not extracted:
+        crawl_method = crawl_method if crawl_method != "crawl4ai" else "snippet_empty"
 
     # Build the item to ingest
     title = (extracted.get("title") or request.title or "").strip()
@@ -416,6 +624,19 @@ async def ingest_one(
         "score": quality_score,
     }
 
+    # Common extracted fields for visualization
+    pub_at = extracted.get("published_at")
+    extracted_fields = dict(
+        extracted_title=title,
+        extracted_description=description,
+        extracted_content_preview=content[:800] if content else "",
+        extracted_author=extracted.get("author"),
+        extracted_image_url=extracted.get("image_url"),
+        extracted_published_at=pub_at.isoformat() if hasattr(pub_at, "isoformat") else (str(pub_at) if pub_at else None),
+        content_length=len(content),
+        crawl_method=crawl_method,
+    )
+
     stored = await VirtualSourceManager.ingest_results(
         user_id=current_user.id,
         provider=request.provider,
@@ -435,6 +656,7 @@ async def ingest_one(
                 news_id=news_id,
                 quality_score=quality_score,
                 message="入库成功",
+                **extracted_fields,
             )
         )
 
@@ -443,6 +665,123 @@ async def ingest_one(
             success=False,
             quality_score=quality_score,
             message="文章已存在或入库失败",
+            **extracted_fields,
+        )
+    )
+
+
+# === Batch Ingest All (crawl + persist multiple URLs) ===
+
+
+@router.post(
+    "/ingest-batch",
+    response_model=ResponseBase[BatchIngestAllResponseData],
+)
+async def ingest_batch(
+    request: BatchIngestAllRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Batch-crawl multiple URLs with crawl4ai and ingest into user's library."""
+    from app.services.ai.virtual_source import VirtualSourceManager
+    from app.services.collector.webpage_extractor import WebpageExtractor
+
+    extractor = WebpageExtractor()
+    urls = [item.url for item in request.items]
+    url_to_input = {item.url: item for item in request.items}
+
+    # Batch crawl with timeout
+    batch_results = []
+    try:
+        batch_results = await asyncio.wait_for(
+            extractor.batch_extract(urls), timeout=60.0
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Batch crawl timeout, returning partial results")
+    except Exception as e:
+        logger.warning(f"Batch crawl failed: {e}")
+
+    url_to_extracted = {url: data for url, data in batch_results}
+
+    item_results: list[BatchIngestItemResult] = []
+    quality_sum = 0.0
+    quality_count = 0
+    succeeded = 0
+
+    for req_item in request.items:
+        extracted = url_to_extracted.get(req_item.url, {})
+        title = (extracted.get("title") or req_item.title or "").strip()
+        description = (extracted.get("description") or req_item.description or "").strip()
+        content = extracted.get("content", "")
+        quality_score = extracted.get("quality_score", 0.0)
+
+        if not title and not content:
+            title = req_item.title or req_item.url
+
+        item = {
+            "title": title,
+            "url": req_item.url,
+            "description": description,
+            "content": content,
+            "image_url": extracted.get("image_url"),
+            "published_at": extracted.get("published_at"),
+            "author": extracted.get("author", ""),
+            "score": quality_score,
+        }
+
+        try:
+            stored_count = await VirtualSourceManager.ingest_results(
+                user_id=current_user.id,
+                provider=request.provider,
+                items=[item],
+            )
+            if stored_count > 0:
+                doc = await mongodb.db.news.find_one(
+                    {"user_id": current_user.id, "url": req_item.url},
+                    sort=[("created_at", -1)],
+                )
+                news_id = str(doc["_id"]) if doc else None
+                item_results.append(
+                    BatchIngestItemResult(
+                        url=req_item.url,
+                        success=True,
+                        news_id=news_id,
+                        quality_score=quality_score,
+                        title=title,
+                        content_length=len(content),
+                    )
+                )
+                succeeded += 1
+                quality_sum += quality_score
+                quality_count += 1
+            else:
+                item_results.append(
+                    BatchIngestItemResult(
+                        url=req_item.url,
+                        success=False,
+                        quality_score=quality_score,
+                        title=title,
+                        content_length=len(content),
+                        error="文章已存在",
+                    )
+                )
+        except Exception as e:
+            item_results.append(
+                BatchIngestItemResult(
+                    url=req_item.url,
+                    success=False,
+                    error=str(e),
+                )
+            )
+
+    avg_quality = round(quality_sum / quality_count, 3) if quality_count > 0 else 0.0
+
+    return success_response(
+        data=BatchIngestAllResponseData(
+            total=len(request.items),
+            succeeded=succeeded,
+            failed=len(request.items) - succeeded,
+            average_quality_score=avg_quality,
+            results=item_results,
         )
     )
 
@@ -515,3 +854,50 @@ async def submit_audit_feedback(
             detail="Audit log not found",
         )
     return success_response(message="Feedback recorded")
+
+
+# === Debug: Test crawl4ai extraction ===
+
+
+@router.get("/debug-crawl")
+async def debug_crawl(
+    url: str = Query(..., description="URL to test crawl"),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Debug endpoint: test Crawl4AI Docker API extraction on a single URL."""
+    from app.services.collector.webpage_extractor import WebpageExtractor
+
+    extractor = WebpageExtractor()
+    diag: dict = {"url": url, "stages": {}}
+
+    # Stage 1: Health check
+    try:
+        import httpx
+        from app.core.config import settings as _settings
+        async with httpx.AsyncClient(timeout=5) as client:
+            health = await client.get(f"{_settings.crawl4ai_base_url.rstrip('/')}/health")
+            diag["stages"]["health"] = health.json()
+    except Exception as e:
+        diag["stages"]["health"] = f"FAIL: {e}"
+        return success_response(data=diag)
+
+    # Stage 2: Full extraction
+    try:
+        extracted = await asyncio.wait_for(
+            extractor.extract(url), timeout=30.0
+        )
+        diag["stages"]["extract"] = {
+            "title": extracted.get("title", ""),
+            "description_length": len(extracted.get("description", "")),
+            "content_length": len(extracted.get("content", "")),
+            "content_preview": extracted.get("content", "")[:500],
+            "quality_score": extracted.get("quality_score", 0),
+            "author": extracted.get("author"),
+            "published_at": str(extracted.get("published_at")) if extracted.get("published_at") else None,
+        }
+    except asyncio.TimeoutError:
+        diag["stages"]["extract"] = "TIMEOUT (30s)"
+    except Exception as e:
+        diag["stages"]["extract"] = f"FAIL: {e}"
+
+    return success_response(data=diag)

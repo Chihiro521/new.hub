@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     external_search_fallback_provider: str = "tavily"
     external_search_default_limit: int = 10
 
+    # === Crawl4AI Docker Service ===
+    crawl4ai_base_url: str = "http://localhost:11235"
+    crawl4ai_api_token: Optional[str] = None
+    crawl4ai_timeout: int = 60
+
     # === External Ingestion Governance ===
     external_ingest_max_concurrency: int = 4
     external_ingest_retry_attempts: int = 2

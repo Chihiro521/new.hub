@@ -1,0 +1,105 @@
+# ============================================
+# Crawl4AI Docker 服务完整配置
+# 文档: https://docs.crawl4ai.com/core/self-hosting/
+# ============================================
+
+# === 应用 ===
+app:
+  title: "Crawl4AI API"
+  version: "1.0.0"
+  host: "0.0.0.0"
+  port: 11235
+  reload: false
+  workers: 1                    # gunicorn worker 数量
+  timeout_keep_alive: 300       # keep-alive 超时(秒)
+
+# === 默认 LLM 配置 ===
+# 仅在使用 LLMExtractionStrategy 时生效
+# API Key 通过 .llm.env 环境变量传入
+llm:
+  provider: "openai/gpt-5.2"   # 你的 OpenAI 兼容接口模型
+  # api_key 和 base_url 通过 .llm.env 环境变量传入
+
+# === Redis (容器内置) ===
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: ""
+  ssl: false
+
+# === 限流 ===
+rate_limiting:
+  enabled: true
+  default_limit: "1000/minute"  # 每分钟最大请求数
+  trusted_proxies: []
+  storage_uri: "memory://"      # 生产环境用 "redis://localhost:6379"
+
+# === 安全 ===
+security:
+  enabled: false                # 本地开发关闭
+  jwt_enabled: false            # JWT 鉴权
+  https_redirect: false
+  trusted_hosts: ["*"]
+  headers:
+    x_content_type_options: "nosniff"
+    x_frame_options: "DENY"
+    content_security_policy: "default-src 'self'"
+    strict_transport_security: "max-age=63072000; includeSubDomains"
+
+# === 爬虫核心 ===
+crawler:
+  base_config:
+    simulate_user: true         # 模拟真实用户行为
+  memory_threshold_percent: 95.0  # 内存使用超过此值停止新任务
+  rate_limiter:
+    enabled: true
+    base_delay: [1.0, 2.0]     # 同域名请求间隔(秒), 随机取范围内值
+  timeouts:
+    stream_init: 30.0           # 流式响应初始化超时(秒)
+    batch_process: 300.0        # 批量处理总超时(秒)
+  pool:
+    max_pages: 40               # 最大并发页面数(全局信号量)
+    idle_ttl_sec: 300           # 空闲浏览器实例回收时间(秒)
+  browser:
+    kwargs:
+      headless: true            # 无头模式
+      text_mode: false          # 关闭纯文本模式, 避免被反爬指纹检测
+      light_mode: true          # 轻量模式(跳过非必要资源, 比 text_mode 温和)
+      enable_stealth: true      # 隐身模式: 隐藏 webdriver 指纹
+      user_agent_mode: "random" # 随机 User-Agent
+    extra_args:                 # Chromium 启动参数
+      - "--no-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--disable-gpu"
+      - "--disable-software-rasterizer"
+      - "--disable-web-security"
+      - "--allow-insecure-localhost"
+      - "--ignore-certificate-errors"
+      - "--disable-blink-features=AutomationControlled"
+
+# === 日志 ===
+logging:
+  level: "INFO"                 # DEBUG / INFO / WARNING / ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# === 监控 ===
+observability:
+  prometheus:
+    enabled: true
+    endpoint: "/metrics"        # Prometheus 指标端点
+  health_check:
+    endpoint: "/health"
+
+# === Webhook (异步任务回调) ===
+webhooks:
+  enabled: false
+  default_url: null             # 全局默认回调 URL
+  data_in_payload: false        # 回调是否携带完整结果
+  retry:
+    max_attempts: 5
+    initial_delay_ms: 1000      # 指数退避: 1s, 2s, 4s, 8s, 16s
+    max_delay_ms: 32000
+    timeout_ms: 30000           # 单次回调超时
+  headers:
+    User-Agent: "Crawl4AI-Webhook/1.0"

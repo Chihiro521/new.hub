@@ -167,6 +167,56 @@ export interface IngestOneResult {
   news_id?: string
   quality_score: number
   message: string
+  // Extracted data for visualization
+  extracted_title: string
+  extracted_description: string
+  extracted_content_preview: string
+  extracted_author?: string
+  extracted_image_url?: string
+  extracted_published_at?: string
+  content_length: number
+  crawl_method: string
+}
+
+// --- Ingest Stream (SSE progress tracking) ---
+
+export interface IngestStepEvent {
+  step: string
+  status: 'running' | 'done' | 'warn' | 'error'
+  message: string
+  elapsed_ms?: number
+  detail?: Record<string, any>
+}
+
+// --- Batch Ingest All ---
+
+export interface BatchIngestItem {
+  url: string
+  title?: string
+  description?: string
+}
+
+export interface BatchIngestAllRequest {
+  items: BatchIngestItem[]
+  provider?: string
+}
+
+export interface BatchIngestItemResult {
+  url: string
+  success: boolean
+  news_id?: string
+  quality_score: number
+  title: string
+  content_length: number
+  error?: string
+}
+
+export interface BatchIngestAllResult {
+  total: number
+  succeeded: number
+  failed: number
+  average_quality_score: number
+  results: BatchIngestItemResult[]
 }
 
 // SSE event shape from backend
@@ -324,6 +374,55 @@ export const assistantApi = {
       payload
     )
     return response.data
+  },
+
+  async ingestBatch(
+    payload: BatchIngestAllRequest
+  ): Promise<ApiResponse<BatchIngestAllResult>> {
+    const response = await apiClient.post<ApiResponse<BatchIngestAllResult>>(
+      '/assistant/ingest-batch',
+      payload
+    )
+    return response.data
+  },
+
+  async ingestOneStream(
+    payload: IngestOneRequest,
+    onStep: (event: IngestStepEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const token = localStorage.getItem('access_token')
+    const response = await fetch('/api/v1/assistant/ingest-one-stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+      signal,
+    })
+    if (!response.ok) {
+      onStep({ step: 'complete', status: 'error', message: `HTTP ${response.status}` })
+      return
+    }
+    const reader = response.body?.getReader()
+    if (!reader) return
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event: IngestStepEvent = JSON.parse(line.slice(6))
+          onStep(event)
+        } catch { /* skip */ }
+      }
+    }
   },
 }
 

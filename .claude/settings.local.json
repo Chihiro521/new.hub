@@ -23,7 +23,29 @@
       "Bash(find:*)",
       "Bash(del:*)",
       "WebSearch",
-      "WebFetch(domain:docs.crawl4ai.com)"
+      "WebFetch(domain:docs.crawl4ai.com)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(conda run:*)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\":*)",
+      "Bash(set PYTHONIOENCODING=utf-8)",
+      "Bash(set PYTHONUTF8=1)",
+      "WebFetch(domain:scrapingbee.com)",
+      "WebFetch(domain:inference.net)",
+      "Bash(python:*)",
+      "Bash(claude mcp add:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git -C \"E:\\\\桌面\\\\接口\" log --oneline -10)",
+      "Bash(git -C \"E:\\\\桌面\\\\接口\" show e67182c --stat)",
+      "Bash(conda list:*)",
+      "Bash(conda activate:*)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\" -m pip show:*)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\" -m pip uninstall:*)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\" -m pip list)",
+      "Bash(du:*)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\" -c:*)",
+      "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\" -c \"import ast; ast.parse\\(open\\(r''E:\\\\桌面\\\\接口\\\\news-hub\\\\backend\\\\app\\\\core\\\\config.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''config.py: OK''\\)\")",
+      "WebFetch(domain:localhost)"
     ]
   }
 }

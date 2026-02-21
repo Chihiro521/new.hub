@@ -46,10 +46,6 @@ class AssistantService:
     ) -> AsyncGenerator[str, None]:
         """Stream assistant chat response chunks."""
         t0 = time.monotonic()
-        external_limit = max(
-            1,
-            min(max_external_results or settings.external_search_default_limit, 50),
-        )
         collected: List[str] = []
 
         if self.client is None:

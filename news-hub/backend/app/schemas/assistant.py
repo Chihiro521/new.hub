@@ -275,3 +275,54 @@ class IngestOneResponseData(BaseModel):
     news_id: Optional[str] = None
     quality_score: float = 0.0
     message: str = ""
+    # Extracted data for visualization
+    extracted_title: str = ""
+    extracted_description: str = ""
+    extracted_content_preview: str = ""
+    extracted_author: Optional[str] = None
+    extracted_image_url: Optional[str] = None
+    extracted_published_at: Optional[str] = None
+    content_length: int = 0
+    crawl_method: str = ""
+
+
+# --- Batch Ingest All ---
+
+
+class BatchIngestItem(BaseModel):
+    """A single item for batch ingestion."""
+
+    url: str = Field(..., min_length=1, description="URL to crawl")
+    title: str = Field(default="", description="Title from search result")
+    description: str = Field(default="", description="Snippet from search result")
+
+
+class BatchIngestAllRequest(BaseModel):
+    """Request to batch-crawl and ingest all external search results."""
+
+    items: List[BatchIngestItem] = Field(
+        ..., min_length=1, max_length=50, description="Items to ingest"
+    )
+    provider: str = Field(default="searxng", description="Source provider name")
+
+
+class BatchIngestItemResult(BaseModel):
+    """Result for a single item in batch ingestion."""
+
+    url: str
+    success: bool
+    news_id: Optional[str] = None
+    quality_score: float = 0.0
+    title: str = ""
+    content_length: int = 0
+    error: Optional[str] = None
+
+
+class BatchIngestAllResponseData(BaseModel):
+    """Response after batch ingesting multiple URLs."""
+
+    total: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    average_quality_score: float = 0.0
+    results: List[BatchIngestItemResult] = Field(default_factory=list)
