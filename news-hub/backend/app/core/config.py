@@ -111,7 +111,12 @@ class Settings(BaseSettings):
     # === Crawl4AI Docker Service ===
     crawl4ai_base_url: str = "http://localhost:11235"
     crawl4ai_api_token: Optional[str] = None
-    crawl4ai_timeout: int = 60
+    crawl4ai_timeout: int = 120
+
+    # === LLM Formatting (Phase 2: Anthropic-compatible API) ===
+    llm_api_base: str = "https://right.codes/claude-aws"
+    llm_api_key: str = "sk-9c0939e08d554b3083ffb09f49dee73d"
+    llm_model: str = "claude-haiku-4-5-20251001"
 
     # === External Ingestion Governance ===
     external_ingest_max_concurrency: int = 4

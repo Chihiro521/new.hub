@@ -5,6 +5,7 @@ import { useSourceStore } from '@/stores/sources'
 import { useTagStore } from '@/stores/tags'
 import SearchBar from '@/components/SearchBar.vue'
 import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
+import ArticleModal from '@/components/ArticleModal.vue'
 
 const newsStore = useNewsStore()
 const sourceStore = useSourceStore()
@@ -66,9 +67,14 @@ async function handleMarkAllRead() {
   }
 }
 
+// Article reading modal
+const showArticleModal = ref(false)
+const articleModalId = ref('')
+
 function openArticle(url: string, newsId: string) {
   handleMarkAsRead(newsId)
-  window.open(url, '_blank')
+  articleModalId.value = newsId
+  showArticleModal.value = true
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -246,6 +252,12 @@ const sourceOptions = computed(() => {
         </div>
       </div>
     </main>
+
+    <ArticleModal
+      :visible="showArticleModal"
+      :news-id="articleModalId"
+      @close="showArticleModal = false"
+    />
   </div>
 </template>
 

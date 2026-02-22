@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { searchApi, type SearchResultItem, type SearchType } from '@/api/search'
 import { assistantApi, type ExternalSearchResultItem, type IngestOneResult, type BatchIngestAllResult, type IngestStepEvent } from '@/api/assistant'
 import SearchBar from '@/components/SearchBar.vue'
+import ArticleModal from '@/components/ArticleModal.vue'
 
 const route = useRoute()
 
@@ -32,6 +33,12 @@ const extProviderUsed = ref('')
 
 // Per-card ingest state: url -> status
 const ingestStatus = ref<Record<string, 'idle' | 'ingesting' | 'success' | 'failed'>>({})
+// url -> news_id mapping for ingested articles
+const ingestedNewsIds = ref<Record<string, string>>({})
+
+// Article reading modal
+const showArticleModal = ref(false)
+const articleModalId = ref('')
 
 // Detail modal state
 const showDetailModal = ref(false)
@@ -192,6 +199,9 @@ async function handleIngest(item: ExternalSearchResultItem) {
           streamResult.value = event.detail || null
           const success = event.detail?.success
           ingestStatus.value[url] = success ? 'success' : 'failed'
+          if (success && event.detail?.news_id) {
+            ingestedNewsIds.value[url] = event.detail.news_id
+          }
         }
       }
     )
@@ -239,6 +249,9 @@ async function handleBatchIngestAll() {
       // Update per-card status
       for (const r of result.data.results) {
         ingestStatus.value[r.url] = r.success ? 'success' : 'failed'
+        if (r.success && r.news_id) {
+          ingestedNewsIds.value[r.url] = r.news_id
+        }
       }
     }
   } catch (err) {
@@ -253,7 +266,13 @@ function closeBatchModal() {
 }
 
 function openArticle(url: string) {
-  window.open(url, '_blank')
+  const newsId = ingestedNewsIds.value[url]
+  if (newsId) {
+    articleModalId.value = newsId
+    showArticleModal.value = true
+  } else {
+    window.open(url, '_blank')
+  }
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -543,6 +562,13 @@ function highlightText(text: string, highlights: Record<string, string[]>, field
           </div>
         </div>
       </Teleport>
+
+      <!-- Article reading modal -->
+      <ArticleModal
+        :visible="showArticleModal"
+        :news-id="articleModalId"
+        @close="showArticleModal = false"
+      />
     </main>
   </div>
 </template>

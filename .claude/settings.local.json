@@ -45,7 +45,12 @@
       "Bash(du:*)",
       "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\" -c:*)",
       "Bash(\"C:\\\\Users\\\\DELL\\\\.conda\\\\envs\\\\news-hub\\\\python.exe\" -c \"import ast; ast.parse\\(open\\(r''E:\\\\桌面\\\\接口\\\\news-hub\\\\backend\\\\app\\\\core\\\\config.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''config.py: OK''\\)\")",
-      "WebFetch(domain:localhost)"
+      "WebFetch(domain:localhost)",
+      "Bash(npm install marked)",
+      "Bash(npx vue-tsc:*)",
+      "Bash(npx vite build:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs"
     ]
   }
 }

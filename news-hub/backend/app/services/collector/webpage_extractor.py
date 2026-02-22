@@ -23,27 +23,40 @@ from loguru import logger
 from app.core.config import settings
 
 # Crawl4AI Docker API: browser_config with stealth for anti-bot bypass
+# NOTE: extra_args MUST include --no-sandbox and --disable-dev-shm-usage
+# because per-request browser_config overrides container defaults entirely.
 _BROWSER_CONFIG = {
     "type": "BrowserConfig",
     "params": {
         "headless": True,
-        "light_mode": True,
         "enable_stealth": True,
         "user_agent_mode": "random",
-        "extra_args": ["--disable-blink-features=AutomationControlled"],
+        "extra_args": [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-blink-features=AutomationControlled",
+        ],
     },
 }
 
-# Crawl4AI Docker API: crawler_config with PruningContentFilter for fit_markdown
+# Crawl4AI Docker API: crawler_config — fast crawl only, NO LLM
+# LLM formatting is done separately in Phase 2 via direct API call
 _CRAWLER_CONFIG = {
     "type": "CrawlerRunConfig",
     "params": {
         "word_count_threshold": 10,
-        "excluded_tags": ["nav", "footer", "aside", "header", "form", "noscript"],
+        "excluded_tags": [
+            "nav", "footer", "aside", "header", "form",
+            "noscript", "script", "style", "iframe",
+        ],
         "exclude_social_media_links": True,
-        "remove_overlay_elements": True,
-        "page_timeout": 30000,
+        "exclude_external_images": False,
+        "remove_overlay_elements": False,
+        "page_timeout": 60000,
         "cache_mode": "bypass",
+        "wait_until": "networkidle",
+        "delay_before_return_html": 2.0,
         "markdown_generator": {
             "type": "DefaultMarkdownGenerator",
             "params": {
@@ -59,6 +72,17 @@ _CRAWLER_CONFIG = {
         },
     },
 }
+
+# LLM formatting instruction (used in Phase 2)
+_LLM_FORMAT_INSTRUCTION = (
+    "你是一个新闻排版助手。请对以下新闻正文进行排版优化：\n"
+    "1. 保留所有图片标签（![alt](url) 格式）\n"
+    "2. 保留正文段落结构\n"
+    "3. 去除残留的导航、广告、侧边栏等无关文本\n"
+    "4. 输出整洁的 Markdown 格式\n"
+    "5. 不要添加任何你自己的评论或总结\n\n"
+    "正文内容：\n"
+)
 
 
 class WebpageExtractor:
@@ -92,7 +116,11 @@ class WebpageExtractor:
             return {}
 
     async def _crawl_via_api(self, url: str) -> Dict[str, Any]:
-        """Call Crawl4AI Docker REST API to crawl a single URL."""
+        """Two-phase extraction: fast crawl → LLM formatting.
+
+        Phase 1: Crawl4AI /crawl (no LLM) → fit_markdown (~3-8s)
+        Phase 2: Claude Haiku formats fit_markdown → clean Markdown (~5-15s)
+        """
         base_url = settings.crawl4ai_base_url.rstrip("/")
         headers = {"Content-Type": "application/json"}
         if settings.crawl4ai_api_token:
@@ -104,7 +132,8 @@ class WebpageExtractor:
             "crawler_config": _CRAWLER_CONFIG,
         }
 
-        logger.debug(f"[crawl4ai-api] POST {base_url}/crawl for {url}")
+        # --- Phase 1: Fast crawl (no LLM) ---
+        logger.debug(f"[crawl4ai] Phase 1: crawling {url}")
         async with httpx.AsyncClient(timeout=settings.crawl4ai_timeout) as client:
             resp = await client.post(f"{base_url}/crawl", json=payload, headers=headers)
             resp.raise_for_status()
@@ -119,19 +148,26 @@ class WebpageExtractor:
             logger.warning(f"Crawl4AI crawl failed for {url}: {item.get('error_message')}")
             return {}
 
-        # Detect server-side blocks: status 403/429/5xx AND no real content
+        # Detect server-side blocks
         status_code = item.get("status_code", 200)
         content = self._pick_markdown(item)
         if status_code in (403, 429, 451, 503) and len(content) < 100:
-            logger.warning(
-                f"Crawl4AI got HTTP {status_code} with no useful content for {url}"
-            )
+            logger.warning(f"Crawl4AI got HTTP {status_code} with no useful content for {url}")
             return {}
 
-        # Extract markdown content
-        logger.debug(f"[crawl4ai-api] extracted {len(content)} chars for {url}")
+        logger.debug(f"[crawl4ai] Phase 1 done: {len(content)} chars for {url}")
 
-        # Prefer metadata from API response, fallback to HTML parsing
+        # --- Phase 2: LLM formatting (only if content is substantial) ---
+        if len(content) >= 200:
+            try:
+                formatted = await self._format_with_llm(content)
+                if formatted and len(formatted) > 100:
+                    logger.debug(f"[crawl4ai] Phase 2 done: {len(formatted)} chars (LLM formatted)")
+                    content = formatted
+            except Exception as e:
+                logger.warning(f"[crawl4ai] Phase 2 LLM formatting failed, using raw: {e}")
+
+        # Extract metadata from HTML
         meta = item.get("metadata") or {}
         html = item.get("html") or item.get("cleaned_html") or ""
         soup = BeautifulSoup(html, "html.parser") if html else None
@@ -169,13 +205,45 @@ class WebpageExtractor:
             "quality_score": quality_score,
         }
 
+    async def _format_with_llm(self, markdown: str) -> Optional[str]:
+        """Phase 2: Call Claude Haiku directly to format markdown.
+
+        Bypasses Crawl4AI — calls the Anthropic-compatible API from backend.
+        """
+        # Truncate to ~12K chars to stay within token limits
+        truncated = markdown[:12000] if len(markdown) > 12000 else markdown
+
+        payload = {
+            "model": settings.llm_model,
+            "max_tokens": 4000,
+            "temperature": 0.1,
+            "messages": [
+                {"role": "user", "content": f"{_LLM_FORMAT_INSTRUCTION}{truncated}"}
+            ],
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": settings.llm_api_key,
+            "anthropic-version": "2023-06-01",
+        }
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{settings.llm_api_base}/v1/messages",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
+        return "\n\n".join(text_blocks) if text_blocks else None
+
     @staticmethod
     def _pick_markdown(item: dict) -> str:
-        """Pick best markdown from Crawl4AI API response item.
+        """Pick best markdown from Crawl4AI API response.
 
-        The API returns markdown as either:
-        - a dict with keys: raw_markdown, fit_markdown, markdown_with_citations
-        - or a plain string
+        Priority: fit_markdown → raw_markdown.
         """
         md = item.get("markdown", "")
         if isinstance(md, dict):
@@ -184,7 +252,6 @@ class WebpageExtractor:
                 return fit
             raw = (md.get("raw_markdown") or "").strip()
             return raw if raw else ""
-        # Plain string fallback
         fit = (item.get("fit_markdown") or "").strip()
         if fit and len(fit) > 50:
             return fit

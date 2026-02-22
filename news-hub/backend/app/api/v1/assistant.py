@@ -418,7 +418,7 @@ async def ingest_one_stream(
         md_source = ""
         try:
             extracted = await asyncio.wait_for(
-                extractor._crawl_via_api(request.url), timeout=30.0
+                extractor._crawl_via_api(request.url), timeout=150.0
             )
             ms = int((_time.monotonic() - t0) * 1000)
             if extracted and extracted.get("content"):
@@ -499,6 +499,24 @@ async def ingest_one_stream(
             title = request.title or request.url
         if not description:
             description = request.description or ""
+
+        # Quality gate: refuse to store empty articles
+        if not content and crawl_method == "all_failed":
+            total_ms = int((_time.monotonic() - t_total) * 1000)
+            yield emit("db_insert", "skip", "正文为空，跳过入库")
+            yield emit("complete", "warn", "入库流程完成（未入库：无正文内容）", detail={
+                "success": False,
+                "news_id": None,
+                "quality_score": 0.0,
+                "crawl_method": crawl_method,
+                "title": title[:100],
+                "content_length": 0,
+                "author": author,
+                "image_url": image_url,
+                "published_at": None,
+                "content_preview": "",
+            }, elapsed_ms=total_ms)
+            return
 
         # Step 6: Database insert
         yield emit("db_insert", "running", "写入数据库...")

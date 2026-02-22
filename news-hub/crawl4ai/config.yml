@@ -17,7 +17,7 @@ app:
 # 仅在使用 LLMExtractionStrategy 时生效
 # API Key 通过 .llm.env 环境变量传入
 llm:
-  provider: "openai/gpt-5.2"   # 你的 OpenAI 兼容接口模型
+  provider: "anthropic/claude-haiku-4-5-20251001"   # Claude Haiku 4.5 via 第三方转发
   # api_key 和 base_url 通过 .llm.env 环境变量传入
 
 # === Redis (容器内置) ===
@@ -65,7 +65,7 @@ crawler:
     kwargs:
       headless: true            # 无头模式
       text_mode: false          # 关闭纯文本模式, 避免被反爬指纹检测
-      light_mode: true          # 轻量模式(跳过非必要资源, 比 text_mode 温和)
+      light_mode: false         # 关闭轻量模式, 确保 JS 重度页面(百度百科等)正常渲染
       enable_stealth: true      # 隐身模式: 隐藏 webdriver 指纹
       user_agent_mode: "random" # 随机 User-Agent
     extra_args:                 # Chromium 启动参数
