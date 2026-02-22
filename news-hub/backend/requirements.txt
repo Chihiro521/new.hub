@@ -22,6 +22,12 @@ elasticsearch[async]==8.15.1
 sentence-transformers==3.3.1
 torch==2.5.1
 
+# === LangChain / LangGraph ===
+langchain>=0.3
+langchain-openai>=0.3
+langgraph>=1.0
+langgraph-checkpoint>=2.0
+
 # === Data Collection ===
 httpx==0.28.1
 openai>=1.0

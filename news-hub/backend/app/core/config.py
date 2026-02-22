@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     openai_timeout: int = 30
     openai_max_retries: int = 1
 
+    # === LangChain Agent ===
+    agent_model: str = "gpt-5.2"
+    agent_temperature: float = 0.0
+    agent_max_iterations: int = 10
+
     # === External Search ===
     tavily_api_key: Optional[str] = None
     searxng_base_url: str = "http://localhost:8080"

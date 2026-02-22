@@ -919,3 +919,45 @@ async def debug_crawl(
         diag["stages"]["extract"] = f"FAIL: {e}"
 
     return success_response(data=diag)
+
+
+@router.post("/research", response_model=ResponseBase[ChatResponseData])
+async def research_with_agent(
+    request: ChatRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Chat with LangGraph research agent.
+
+    Uses LangChain/LangGraph for multi-step reasoning with tool calling.
+    Supports the same SSE streaming protocol as /chat and /chat-rag.
+    """
+    from app.services.ai.agents.research_agent import ResearchAgent
+
+    agent = ResearchAgent()
+    messages: List[dict] = [m.model_dump() for m in request.messages]
+
+    if not request.stream:
+        chunks = []
+        async for chunk in agent.chat(messages=messages, user_id=current_user.id):
+            chunks.append(chunk)
+        return success_response(data=ChatResponseData(reply="".join(chunks)))
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for delta in agent.chat(messages=messages, user_id=current_user.id):
+                payload = json.dumps({"type": "delta", "content": delta})
+                yield f"data: {payload}\n\n"
+            yield 'data: {"type": "done"}\n\n'
+        except Exception as e:
+            error_payload = json.dumps({"type": "error", "content": str(e)})
+            yield f"data: {error_payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
