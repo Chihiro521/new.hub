@@ -21,6 +21,7 @@ from app.schemas.assistant import (
     ChatResponseData,
     ClassifyRequest,
     ClassifyResponseData,
+    DebateResearchRequest,
     DeepResearchRequest,
     DeepResearchResponseData,
     DiscoverSourcesRequest,
@@ -1009,6 +1010,59 @@ async def deep_research(
         except Exception as e:
             error_payload = json.dumps({"type": "error", "content": str(e)})
             yield f"data: {error_payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/debate-research", response_model=ResponseBase[DeepResearchResponseData])
+async def debate_research(
+    request: DebateResearchRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Multi-agent debate research (Grok 4.2 style).
+
+    Four agents (Captain, Harper, Benjamin, Lucas) collaborate through
+    structured debate to produce a comprehensive research report.
+    Captain auto-adjusts team composition based on query complexity.
+    """
+    from app.services.ai.agents.multi_agent_debate import MultiAgentDebate
+
+    engine = MultiAgentDebate()
+
+    if not request.stream:
+        chunks = []
+        async for chunk in engine.run(
+            query=request.query,
+            user_id=current_user.id,
+            system_prompt=request.system_prompt,
+        ):
+            chunks.append(chunk)
+        full_report = "".join(chunks)
+        return success_response(
+            data=DeepResearchResponseData(query=request.query, report=full_report)
+        )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for delta in engine.run(
+                query=request.query,
+                user_id=current_user.id,
+                system_prompt=request.system_prompt,
+            ):
+                payload = json.dumps({"type": "delta", "content": delta})
+                yield f"data: {payload}\n\n"
+            yield 'data: {"type": "done"}\n\n'
+        except Exception as e:
+            ep = json.dumps({"type": "error", "content": str(e)})
+            yield f"data: {ep}\n\n"
 
     return StreamingResponse(
         event_generator(),

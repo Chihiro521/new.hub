@@ -361,3 +361,15 @@ class DeepResearchResponseData(BaseModel):
     report: str = ""
     sources: List[ResearchSource] = Field(default_factory=list)
     sub_questions: List[str] = Field(default_factory=list)
+
+
+class DebateResearchRequest(BaseModel):
+    """Request for multi-agent debate research (Grok 4.2 style)."""
+
+    query: str = Field(..., min_length=1, max_length=500, description="研究问题")
+    stream: bool = Field(default=True, description="Enable streaming response")
+    system_prompt: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="自定义系统提示词，影响所有代理行为",
+    )
