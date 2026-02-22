@@ -199,12 +199,23 @@ class MultiAgentDebate:
             return None
 
         async def _llm(system: str, user: str) -> str:
-            """Helper: single LLM call."""
-            resp = await model.ainvoke([
-                SystemMessage(content=system),
-                HumanMessage(content=user),
-            ])
-            return resp.content or ""
+            """Helper: single LLM call with retry."""
+            import asyncio
+            for attempt in range(3):
+                try:
+                    resp = await asyncio.wait_for(
+                        model.ainvoke([
+                            SystemMessage(content=system),
+                            HumanMessage(content=user),
+                        ]),
+                        timeout=90,
+                    )
+                    return resp.content or ""
+                except Exception as e:
+                    logger.warning(f"LLM call attempt {attempt+1} failed: {e}")
+                    if attempt < 2:
+                        await asyncio.sleep(2)
+            return "(LLM调用失败，跳过此步骤)"
 
         # ---- Node: captain_decompose ----
         async def captain_decompose(state: DebateState) -> dict:
@@ -237,30 +248,45 @@ class MultiAgentDebate:
             if "harper" not in state["active_agents"]:
                 return {"harper_output": "(Harper未激活)", "status_updates": []}
 
-            # Harper has tool access — run searches
-            from app.services.ai.tools.search_tools import create_search_tools
-            from app.services.ai.tools.content_tools import create_content_tools
-
-            search_tools = create_search_tools(user_id)
-            search_user = search_tools[0]
-            web_search = search_tools[2]
+            # Harper has tool access — run searches with timeout protection
+            import asyncio
 
             search_data_parts = []
-            for task in state["sub_tasks"][:3]:
+
+            async def _safe_search(coro, label):
                 try:
-                    es_raw = await search_user.ainvoke({"query": task, "limit": 3})
-                    es_data = json.loads(es_raw) if isinstance(es_raw, str) else es_raw
-                    for r in es_data.get("results", []):
-                        search_data_parts.append(f"[内部] {r.get('title', '')} - {r.get('url', '')}: {r.get('description', '')[:100]}")
-                except Exception:
-                    pass
-                try:
-                    web_raw = await web_search.ainvoke({"query": task, "max_results": 5})
-                    web_data = json.loads(web_raw) if isinstance(web_raw, str) else web_raw
-                    for r in web_data.get("results", []):
-                        search_data_parts.append(f"[外部] {r.get('title', '')} - {r.get('url', '')}: {r.get('description', '')[:100]}")
-                except Exception:
-                    pass
+                    return await asyncio.wait_for(coro, timeout=15)
+                except Exception as e:
+                    logger.warning(f"Harper {label} failed: {e}")
+                    return None
+
+            try:
+                from app.services.ai.tools.search_tools import create_search_tools
+                search_tools = create_search_tools(user_id)
+                search_user = search_tools[0]
+                web_search_tool = search_tools[2]
+
+                # Only search the first 2 sub-tasks to save time
+                for task in state["sub_tasks"][:2]:
+                    # ES search
+                    es_raw = await _safe_search(
+                        search_user.ainvoke({"query": task, "limit": 3}), f"ES:{task[:20]}"
+                    )
+                    if es_raw:
+                        es_data = json.loads(es_raw) if isinstance(es_raw, str) else es_raw
+                        for r in es_data.get("results", []):
+                            search_data_parts.append(f"[内部] {r.get('title', '')} - {r.get('url', '')}: {r.get('description', '')[:100]}")
+
+                    # Web search
+                    web_raw = await _safe_search(
+                        web_search_tool.ainvoke({"query": task, "max_results": 3}), f"Web:{task[:20]}"
+                    )
+                    if web_raw:
+                        web_data = json.loads(web_raw) if isinstance(web_raw, str) else web_raw
+                        for r in web_data.get("results", []):
+                            search_data_parts.append(f"[外部] {r.get('title', '')} - {r.get('url', '')}: {r.get('description', '')[:100]}")
+            except Exception as e:
+                logger.warning(f"Harper search init failed: {e}")
 
             search_data = "\n".join(search_data_parts) or "(无搜索结果)"
             custom = state.get("custom_system_prompt") or ""
