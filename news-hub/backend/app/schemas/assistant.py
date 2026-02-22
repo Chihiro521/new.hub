@@ -24,6 +24,11 @@ class ChatRequest(BaseModel):
 
     messages: List[ChatMessage] = Field(..., description="Conversation messages")
     stream: bool = Field(default=True, description="Enable streaming response")
+    system_prompt: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="自定义系统提示词，覆盖默认助手行为",
+    )
 
 
 class SummarizeRequest(BaseModel):
@@ -326,3 +331,33 @@ class BatchIngestAllResponseData(BaseModel):
     failed: int = 0
     average_quality_score: float = 0.0
     results: List[BatchIngestItemResult] = Field(default_factory=list)
+
+
+# === Deep Research ===
+
+class DeepResearchRequest(BaseModel):
+    """Request for deep multi-step research."""
+
+    query: str = Field(..., min_length=1, max_length=500, description="研究问题")
+    stream: bool = Field(default=True, description="Enable streaming response")
+    system_prompt: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="自定义系统提示词，覆盖默认研究助手行为",
+    )
+
+
+class ResearchSource(BaseModel):
+    """A cited source in the research report."""
+
+    title: str = ""
+    url: str = ""
+
+
+class DeepResearchResponseData(BaseModel):
+    """Structured research report response."""
+
+    query: str
+    report: str = ""
+    sources: List[ResearchSource] = Field(default_factory=list)
+    sub_questions: List[str] = Field(default_factory=list)

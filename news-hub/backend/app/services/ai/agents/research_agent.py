@@ -67,7 +67,7 @@ class ResearchAgent:
         self.audit = AuditLogger()
         self._checkpointer = _create_checkpointer()
 
-    def _build_graph(self, user_id: str) -> Any:
+    def _build_graph(self, user_id: str, system_prompt: Optional[str] = None) -> Any:
         """Build a LangGraph StateGraph for the given user."""
         model = get_chat_model()
         if model is None:
@@ -76,10 +76,11 @@ class ResearchAgent:
         tools = create_tools_for_user(user_id)
         tools_by_name = {t.name: t for t in tools}
         model_with_tools = model.bind_tools(tools)
+        effective_prompt = system_prompt or RESEARCH_SYSTEM_PROMPT
 
         async def reason(state: MessagesState) -> Dict[str, List]:
             """LLM reasoning node — decides whether to call tools or respond."""
-            messages = [SystemMessage(content=RESEARCH_SYSTEM_PROMPT)] + state["messages"]
+            messages = [SystemMessage(content=effective_prompt)] + state["messages"]
             response = await model_with_tools.ainvoke(messages)
             return {"messages": [response]}
 
@@ -122,6 +123,7 @@ class ResearchAgent:
         messages: List[Dict[str, str]],
         user_id: str,
         thread_id: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream agent responses.
 
@@ -130,7 +132,7 @@ class ResearchAgent:
         """
         t0 = time.monotonic()
 
-        graph = self._build_graph(user_id)
+        graph = self._build_graph(user_id, system_prompt=system_prompt)
         if graph is None:
             fallback = "AI 助手暂不可用，请先配置 OPENAI_API_KEY。"
             yield fallback

@@ -21,6 +21,8 @@ from app.schemas.assistant import (
     ChatResponseData,
     ClassifyRequest,
     ClassifyResponseData,
+    DeepResearchRequest,
+    DeepResearchResponseData,
     DiscoverSourcesRequest,
     DiscoverSourcesResponseData,
     ExternalSearchOptionsResponseData,
@@ -70,13 +72,17 @@ async def chat_with_assistant(
 
     if not request.stream:
         chunks = []
-        async for chunk in service.chat(messages=messages, user_id=current_user.id):
+        async for chunk in service.chat(
+            messages=messages, user_id=current_user.id, system_prompt=request.system_prompt
+        ):
             chunks.append(chunk)
         return success_response(data=ChatResponseData(reply="".join(chunks)))
 
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
-            async for delta in service.chat(messages=messages, user_id=current_user.id):
+            async for delta in service.chat(
+                messages=messages, user_id=current_user.id, system_prompt=request.system_prompt
+            ):
                 payload = json.dumps({"type": "delta", "content": delta})
                 yield f"data: {payload}\n\n"
             yield 'data: {"type": "done"}\n\n'
@@ -945,6 +951,58 @@ async def research_with_agent(
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             async for delta in agent.chat(messages=messages, user_id=current_user.id):
+                payload = json.dumps({"type": "delta", "content": delta})
+                yield f"data: {payload}\n\n"
+            yield 'data: {"type": "done"}\n\n'
+        except Exception as e:
+            error_payload = json.dumps({"type": "error", "content": str(e)})
+            yield f"data: {error_payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/deep-research", response_model=ResponseBase[DeepResearchResponseData])
+async def deep_research(
+    request: DeepResearchRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Run multi-step deep research: plan -> search -> read -> synthesize.
+
+    Returns a structured research report with citations.
+    Supports SSE streaming for real-time progress updates.
+    """
+    from app.services.ai.agents.deep_research_agent import DeepResearchAgent
+
+    agent = DeepResearchAgent()
+
+    if not request.stream:
+        chunks = []
+        async for chunk in agent.research(
+            query=request.query,
+            user_id=current_user.id,
+            system_prompt=request.system_prompt,
+        ):
+            chunks.append(chunk)
+        full_report = "".join(chunks)
+        return success_response(
+            data=DeepResearchResponseData(query=request.query, report=full_report)
+        )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for delta in agent.research(
+                query=request.query,
+                user_id=current_user.id,
+                system_prompt=request.system_prompt,
+            ):
                 payload = json.dumps({"type": "delta", "content": delta})
                 yield f"data: {payload}\n\n"
             yield 'data: {"type": "done"}\n\n'

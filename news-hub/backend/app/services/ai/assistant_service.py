@@ -42,7 +42,7 @@ class AssistantService:
         self.external_ingestion = ExternalIngestionService()
 
     async def chat(
-        self, messages: List[dict], user_id: str
+        self, messages: List[dict], user_id: str, system_prompt: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream assistant chat response chunks via LangGraph agent.
 
@@ -52,7 +52,9 @@ class AssistantService:
         from app.services.ai.agents.research_agent import ResearchAgent
 
         agent = ResearchAgent()
-        async for chunk in agent.chat(messages=messages, user_id=user_id):
+        async for chunk in agent.chat(
+            messages=messages, user_id=user_id, system_prompt=system_prompt
+        ):
             yield chunk
 
     async def summarize(self, news_id: str, user_id: str) -> SummarizeResponseData:
