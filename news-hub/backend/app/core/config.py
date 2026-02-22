@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     agent_model: str = "gpt-5.2"
     agent_temperature: float = 0.0
     agent_max_iterations: int = 10
+    agent_checkpointer: str = "mongodb"  # "memory" or "mongodb"
 
     # === External Search ===
     tavily_api_key: Optional[str] = None

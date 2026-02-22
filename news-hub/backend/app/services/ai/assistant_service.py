@@ -44,57 +44,16 @@ class AssistantService:
     async def chat(
         self, messages: List[dict], user_id: str
     ) -> AsyncGenerator[str, None]:
-        """Stream assistant chat response chunks."""
-        t0 = time.monotonic()
-        collected: List[str] = []
+        """Stream assistant chat response chunks via LangGraph agent.
 
-        if self.client is None:
-            fallback = "AI 助手暂不可用，请先配置 OPENAI_API_KEY。"
-            yield fallback
-            await self.audit.log(
-                user_id=user_id,
-                action="chat",
-                input_summary=messages[-1].get("content", "")[:200] if messages else "",
-                output_summary=fallback,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                fallback_used=True,
-            )
-            return
+        Now uses the same LangGraph ResearchAgent as /chat-rag and /research,
+        giving the basic chat endpoint full tool-calling capabilities.
+        """
+        from app.services.ai.agents.research_agent import ResearchAgent
 
-        payload_messages = [{"role": "system", "content": SYSTEM_CHAT}, *messages]
-
-        try:
-            stream = await self.client.chat.completions.create(
-                model=settings.openai_model,
-                messages=payload_messages,
-                stream=True,
-            )
-            async for chunk in stream:
-                for choice in chunk.choices:
-                    delta = choice.delta.content
-                    if delta:
-                        collected.append(delta)
-                        yield delta
-
-            await self.audit.log(
-                user_id=user_id,
-                action="chat",
-                input_summary=messages[-1].get("content", "")[:200] if messages else "",
-                output_summary="".join(collected)[:200],
-                model=settings.openai_model,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-            )
-        except Exception as e:
-            logger.error(f"AI chat streaming failed for user {user_id}: {e}")
-            await self.audit.log(
-                user_id=user_id,
-                action="chat",
-                input_summary=messages[-1].get("content", "")[:200] if messages else "",
-                model=settings.openai_model,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                error=str(e),
-            )
-            raise
+        agent = ResearchAgent()
+        async for chunk in agent.chat(messages=messages, user_id=user_id):
+            yield chunk
 
     async def summarize(self, news_id: str, user_id: str) -> SummarizeResponseData:
         """Summarize a news item with AI, fallback to extractive summary."""
@@ -453,7 +412,7 @@ class AssistantService:
             from app.db.es import es_client
             from app.services.search.search_service import SearchService
 
-            if es_client.client is None:
+            if not es_client.is_connected:
                 return []
 
             svc = SearchService(es_client.client)

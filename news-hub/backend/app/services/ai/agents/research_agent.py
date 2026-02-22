@@ -19,6 +19,18 @@ from app.services.ai.audit import AuditLogger
 from app.services.ai.model_provider import get_chat_model
 from app.services.ai.tools import create_tools_for_user
 
+
+def _create_checkpointer():
+    """Create the appropriate checkpointer based on config."""
+    if settings.agent_checkpointer == "mongodb":
+        try:
+            from app.services.ai.checkpointer import MongoDBCheckpointer
+            logger.info("Using MongoDB checkpointer for agent state persistence")
+            return MongoDBCheckpointer()
+        except Exception as e:
+            logger.warning(f"MongoDB checkpointer init failed, falling back to memory: {e}")
+    return MemorySaver()
+
 RESEARCH_SYSTEM_PROMPT = """你是 News Hub 的智能研究助手。
 
 你可以使用多种工具来帮助用户进行信息研究和分析：
@@ -53,7 +65,7 @@ class ResearchAgent:
 
     def __init__(self):
         self.audit = AuditLogger()
-        self._checkpointer = MemorySaver()
+        self._checkpointer = _create_checkpointer()
 
     def _build_graph(self, user_id: str) -> Any:
         """Build a LangGraph StateGraph for the given user."""
