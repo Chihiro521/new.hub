@@ -115,6 +115,83 @@ class WebpageExtractor:
             logger.warning(f"Fallback extraction also failed for {url}: {e}")
             return {}
 
+    async def extract_light(self, url: str) -> Dict[str, Any]:
+        """Lightweight extraction: Phase 1 only (no LLM formatting).
+
+        Returns Crawl4AI fit_markdown directly — faster and avoids
+        Phase 2 timeout on large pages. Ideal for research scenarios.
+        Falls back to httpx + BeautifulSoup if Crawl4AI is unavailable.
+        """
+        try:
+            result = await self._crawl_phase1_only(url)
+            if result and result.get("content"):
+                return result
+        except Exception as e:
+            logger.warning(f"Crawl4AI light extraction failed for {url}: {e}")
+
+        try:
+            return await self._fallback_extract(url)
+        except Exception as e:
+            logger.warning(f"Fallback extraction also failed for {url}: {e}")
+            return {}
+
+    async def _crawl_phase1_only(self, url: str) -> Dict[str, Any]:
+        """Phase 1 only: Crawl4AI fast crawl, return fit_markdown directly."""
+        base_url = settings.crawl4ai_base_url.rstrip("/")
+        headers = {"Content-Type": "application/json"}
+        if settings.crawl4ai_api_token:
+            headers["Authorization"] = f"Bearer {settings.crawl4ai_api_token}"
+
+        payload = {
+            "urls": [url],
+            "browser_config": _BROWSER_CONFIG,
+            "crawler_config": _CRAWLER_CONFIG,
+        }
+
+        logger.debug(f"[crawl4ai-light] crawling {url}")
+        async with httpx.AsyncClient(timeout=settings.crawl4ai_timeout) as client:
+            resp = await client.post(f"{base_url}/crawl", json=payload, headers=headers)
+            resp.raise_for_status()
+
+        data = resp.json()
+        if not data.get("success") or not data.get("results"):
+            return {}
+
+        item = data["results"][0]
+        if not item.get("success"):
+            return {}
+
+        status_code = item.get("status_code", 200)
+        content = self._pick_markdown(item)
+        if status_code in (403, 429, 451, 503) and len(content) < 100:
+            return {}
+
+        logger.debug(f"[crawl4ai-light] done: {len(content)} chars for {url}")
+
+        # Extract metadata from HTML (lightweight, no Phase 2 LLM)
+        meta = item.get("metadata") or {}
+        html = item.get("html") or item.get("cleaned_html") or ""
+        soup = BeautifulSoup(html, "html.parser") if html else None
+
+        title = (
+            meta.get("og:title") or meta.get("title") or ""
+        ).strip() or (self._extract_title(soup) if soup else "")
+        description = (
+            meta.get("og:description") or meta.get("description") or ""
+        ).strip()[:500] or (self._extract_description(soup, content) if soup else content[:500])
+        canonical_url = self.normalize_url(
+            (meta.get("og:url") or "").strip()
+            or (self._extract_canonical_url(soup, url) if soup else url)
+        )
+
+        return {
+            "title": title,
+            "description": description,
+            "content": content,
+            "canonical_url": canonical_url,
+            "quality_score": self._quality_score(content, title, description),
+        }
+
     async def _crawl_via_api(self, url: str) -> Dict[str, Any]:
         """Two-phase extraction: fast crawl → LLM formatting.
 

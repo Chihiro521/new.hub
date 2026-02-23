@@ -1,6 +1,6 @@
 """Content fetching LangChain tools.
 
-Tools: fetch_rss, scrape_webpage
+Tools: fetch_rss, scrape_webpage, scrape_webpage_light
 """
 
 import json
@@ -39,28 +39,56 @@ def create_content_tools():
 
     @tool
     async def scrape_webpage(url: str) -> str:
-        """抓取网页正文内容。当用户提供网页链接并要求分析内容时使用。"""
+        """抓取网页正文内容。使用Crawl4AI进行JS渲染和智能提取，当用户提供网页链接并要求分析内容时使用。"""
         try:
-            import httpx
-            from bs4 import BeautifulSoup
+            from app.services.collector.webpage_extractor import WebpageExtractor
 
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; NewsHub/1.0)"})
-                resp.raise_for_status()
+            extractor = WebpageExtractor()
+            result = await extractor.extract(url)
 
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for tag in soup(["script", "style", "nav", "footer", "header"]):
-                tag.decompose()
+            if not result or not result.get("content"):
+                return json.dumps({"url": url, "error": "无法提取内容", "title": "", "content": ""}, ensure_ascii=False)
 
-            title = soup.title.string.strip() if soup.title and soup.title.string else ""
-            article = soup.find("article") or soup.find("main") or soup.body
-            text = article.get_text(separator="\n", strip=True) if article else ""
-            if len(text) > 3000:
-                text = text[:3000] + "...(已截断)"
+            content = result["content"]
+            if len(content) > 5000:
+                content = content[:5000] + "...(已截断)"
 
-            return json.dumps({"url": url, "title": title, "content": text}, ensure_ascii=False)
+            return json.dumps({
+                "url": url,
+                "title": result.get("title", ""),
+                "content": content,
+                "author": result.get("author"),
+                "published_at": result["published_at"].isoformat() if result.get("published_at") else None,
+                "quality_score": result.get("quality_score", 0),
+            }, ensure_ascii=False)
         except Exception as e:
             logger.error(f"scrape_webpage failed: {e}")
             return json.dumps({"error": str(e), "title": "", "content": ""}, ensure_ascii=False)
 
-    return [fetch_rss, scrape_webpage]
+    @tool
+    async def scrape_webpage_light(url: str) -> str:
+        """轻量抓取网页内容（跳过LLM格式化）。用于研究场景，速度更快，支持大页面。"""
+        try:
+            from app.services.collector.webpage_extractor import WebpageExtractor
+
+            extractor = WebpageExtractor()
+            result = await extractor.extract_light(url)
+
+            if not result or not result.get("content"):
+                return json.dumps({"url": url, "error": "无法提取内容", "title": "", "content": ""}, ensure_ascii=False)
+
+            content = result["content"]
+            if len(content) > 8000:
+                content = content[:8000] + "...(已截断)"
+
+            return json.dumps({
+                "url": url,
+                "title": result.get("title", ""),
+                "content": content,
+                "quality_score": result.get("quality_score", 0),
+            }, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"scrape_webpage_light failed: {e}")
+            return json.dumps({"error": str(e), "title": "", "content": ""}, ensure_ascii=False)
+
+    return [fetch_rss, scrape_webpage, scrape_webpage_light]

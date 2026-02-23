@@ -139,6 +139,7 @@ Write-Host ''
 
 # 初始化 conda
 `$condaRoot = `$null
+`$condaActivated = `$false
 try {
     `$condaRoot = (conda info --base 2>`$null).Trim()
 } catch {}
@@ -148,6 +149,7 @@ if (`$condaRoot) {
     if (Test-Path `$condaHook) {
         . `$condaHook
         conda activate news-hub
+        `$condaActivated = `$true
     }
 }
 
@@ -158,7 +160,18 @@ Write-Host ''
 Write-Host 'Press Ctrl+C to stop' -ForegroundColor Yellow
 Write-Host ''
 
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+if (`$condaActivated) {
+    python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+} else {
+    `$condaPython = Join-Path `$condaRoot 'envs\news-hub\python.exe'
+    if (Test-Path `$condaPython) {
+        Write-Host '[INFO] conda activate failed, using python directly' -ForegroundColor Yellow
+        & `$condaPython -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    } else {
+        Write-Host '[ERROR] Cannot find news-hub conda python, trying system python' -ForegroundColor Red
+        python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    }
+}
 "@
 
         Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd

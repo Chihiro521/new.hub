@@ -219,7 +219,7 @@ class VirtualSourceManager:
             from app.db.es import es_client
             from app.services.search.indexer import ESIndexer
 
-            if es_client.client is None:
+            if not es_client.is_connected:
                 return
 
             for i, doc in enumerate(docs):

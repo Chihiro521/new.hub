@@ -95,7 +95,7 @@ async def search_news(
         search_type = "hybrid"
 
     # Check if ES is available
-    if es_client.client is None:
+    if not es_client.is_connected:
         return success_response(
             data=SearchResponseData(
                 query=q,
@@ -169,7 +169,7 @@ async def suggest_completions(
 
     Returns up to `size` title suggestions matching the prefix.
     """
-    if es_client.client is None:
+    if not es_client.is_connected:
         return success_response(
             data=SuggestResponseData(prefix=q, suggestions=[]),
             message="Suggestions unavailable: Elasticsearch not connected",
@@ -196,7 +196,7 @@ async def get_search_status(
     """
     from app.core.config import settings
 
-    es_available = es_client.client is not None
+    es_available = es_client.is_connected
     embedding_available = embedding_service.is_available
 
     return success_response(
@@ -222,7 +222,7 @@ async def reindex_user_news(
     from app.db.mongo import mongodb
     from app.services.search.indexer import ESIndexer
 
-    if es_client.client is None:
+    if not es_client.is_connected:
         return success_response(
             data={"indexed": 0},
             message="Elasticsearch not connected",

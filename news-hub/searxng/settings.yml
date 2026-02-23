@@ -1,15 +1,67 @@
 use_default_settings: true
 
+general:
+  instance_name: "News Hub SearXNG"
+  enable_metrics: true
+
 server:
   bind_address: "0.0.0.0"
   port: 8080
   secret_key: "news-hub-dev-searxng-secret-key"
+  limiter: false
+  image_proxy: false
+  method: "GET"
 
 search:
   safe_search: 1
+  default_lang: "auto"
+  autocomplete: "google"
+  autocomplete_min: 2
   formats:
     - html
     - json
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 15.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+  # 如果需要代理访问国际引擎，取消下面的注释并填入你的代理地址
+  # proxies:
+  #   all://:
+  #     - socks5://127.0.0.1:7890
+  # extra_proxy_timeout: 10
+
+ui:
+  default_theme: simple
+  default_locale: "zh-Hans-CN"
+  query_in_title: false
+  theme_args:
+    simple_style: auto
 
 redis:
   url: redis://searxng-redis:6379/0
+
+# ============================================================
+# 引擎配置：use_default_settings: true 已加载所有默认引擎，
+# 下面只启用默认关闭的中文引擎，其余保持默认
+# ============================================================
+engines:
+  - name: baidu
+    engine: baidu
+    disabled: false
+    shortcut: bd
+
+  - name: sogou
+    engine: sogou
+    disabled: false
+    shortcut: sg
+
+  - name: 360search
+    engine: 360search
+    disabled: false
+    shortcut: 360so
+    timeout: 10.0

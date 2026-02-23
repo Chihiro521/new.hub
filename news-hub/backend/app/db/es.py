@@ -53,6 +53,8 @@ class ElasticsearchClient:
             )
         except Exception as e:
             logger.error(f"Elasticsearch connection failed: {e}")
+            await self._client.close()
+            self._client = None
             raise
 
     async def disconnect(self) -> None:
@@ -60,6 +62,11 @@ class ElasticsearchClient:
         if self._client:
             await self._client.close()
             logger.info("Elasticsearch disconnected")
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if Elasticsearch is connected."""
+        return self._client is not None
 
     @property
     def client(self) -> AsyncElasticsearch:

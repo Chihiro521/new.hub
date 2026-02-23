@@ -248,14 +248,14 @@ class MultiAgentDebate:
             if "harper" not in state["active_agents"]:
                 return {"harper_output": "(Harper未激活)", "status_updates": []}
 
-            # Harper has tool access — run searches with timeout protection
             import asyncio
 
             search_data_parts = []
+            external_urls = []
 
-            async def _safe_search(coro, label):
+            async def _safe(coro, label, timeout_s=15):
                 try:
-                    return await asyncio.wait_for(coro, timeout=15)
+                    return await asyncio.wait_for(coro, timeout=timeout_s)
                 except Exception as e:
                     logger.warning(f"Harper {label} failed: {e}")
                     return None
@@ -266,42 +266,73 @@ class MultiAgentDebate:
                 search_user = search_tools[0]
                 web_search_tool = search_tools[2]
 
-                # Only search the first 2 sub-tasks to save time
                 for task in state["sub_tasks"][:2]:
-                    # ES search
-                    es_raw = await _safe_search(
-                        search_user.ainvoke({"query": task, "limit": 3}), f"ES:{task[:20]}"
-                    )
+                    es_raw = await _safe(search_user.ainvoke({"query": task, "limit": 3}), f"ES:{task[:20]}")
                     if es_raw:
                         es_data = json.loads(es_raw) if isinstance(es_raw, str) else es_raw
                         for r in es_data.get("results", []):
                             search_data_parts.append(f"[内部] {r.get('title', '')} - {r.get('url', '')}: {r.get('description', '')[:100]}")
 
-                    # Web search
-                    web_raw = await _safe_search(
-                        web_search_tool.ainvoke({"query": task, "max_results": 3}), f"Web:{task[:20]}"
-                    )
+                    web_raw = await _safe(web_search_tool.ainvoke({"query": task, "max_results": 5}), f"Web:{task[:20]}")
                     if web_raw:
                         web_data = json.loads(web_raw) if isinstance(web_raw, str) else web_raw
                         for r in web_data.get("results", []):
                             search_data_parts.append(f"[外部] {r.get('title', '')} - {r.get('url', '')}: {r.get('description', '')[:100]}")
+                            if r.get("url"):
+                                external_urls.append({"title": r.get("title", ""), "url": r["url"]})
             except Exception as e:
                 logger.warning(f"Harper search init failed: {e}")
 
             search_data = "\n".join(search_data_parts) or "(无搜索结果)"
+
+            # Deep read: use light mode (skip Phase 2 LLM), parallel, pick best URLs
+            deep_read_parts = []
+            if external_urls:
+                try:
+                    from app.services.ai.agents.deep_research_agent import _scrape_light
+
+                    # Simple relevance: prefer URLs whose title contains query keywords
+                    query_chars = set(state["query"])
+                    scored = sorted(external_urls, key=lambda u: sum(1 for c in query_chars if c in u["title"]), reverse=True)
+                    top_urls = [u["url"] for u in scored[:2]]
+
+                    tasks = [_scrape_light(url, timeout_s=60) for url in top_urls]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    for url, result in zip(top_urls, results):
+                        if isinstance(result, Exception) or not result:
+                            continue
+                        content = result.get("content", "")
+                        if content:
+                            deep_read_parts.append(
+                                f"=== {result.get('title', url)} ===\n{content[:3000]}"
+                            )
+                except Exception as e:
+                    logger.warning(f"Harper deep read failed: {e}")
+
+            full_search_data = search_data
+            if deep_read_parts:
+                full_search_data += "\n\n--- 网页详细内容 ---\n" + "\n\n".join(deep_read_parts)
+
             custom = state.get("custom_system_prompt") or ""
 
             prompt = HARPER_PROMPT.format(
                 query=state["query"],
                 sub_tasks="; ".join(state["sub_tasks"]),
-                search_data=search_data,
+                search_data=full_search_data,
                 custom_prompt=custom,
             )
             output = await _llm("你是Harper，研究团队的事实与信息专家。", prompt)
 
             return {
                 "harper_output": output,
-                "status_updates": [f"[🔍 Harper: 搜集了 {len(search_data_parts)} 条信息]"],
+                "status_updates": [
+                    f"[Harper: 搜集了 {len(search_data_parts)} 条信息]",
+                    *(
+                        [f"[Harper: 深度阅读了 {len(deep_read_parts)} 个网页 (light mode)]"]
+                        if deep_read_parts else []
+                    ),
+                ],
             }
 
         # ---- Node: benjamin_analyze ----

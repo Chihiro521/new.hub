@@ -283,7 +283,7 @@ class NewsPipeline:
             from app.services.search.indexer import ESIndexer
 
             # Check if ES is available
-            if es_client.client is None:
+            if not es_client.is_connected:
                 logger.debug("Elasticsearch not available, skipping indexing")
                 return
 
