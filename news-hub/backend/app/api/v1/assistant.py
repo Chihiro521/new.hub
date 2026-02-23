@@ -21,6 +21,9 @@ from app.schemas.assistant import (
     ChatResponseData,
     ClassifyRequest,
     ClassifyResponseData,
+    ConversationListResponse,
+    ConversationThread,
+    ConversationUpdateRequest,
     DebateResearchRequest,
     DeepResearchRequest,
     DeepResearchResponseData,
@@ -73,17 +76,30 @@ async def chat_with_assistant(
 
     if not request.stream:
         chunks = []
+        thread_id = None
         async for chunk in service.chat(
-            messages=messages, user_id=current_user.id, system_prompt=request.system_prompt
+            messages=messages, user_id=current_user.id,
+            system_prompt=request.system_prompt,
+            thread_id=request.thread_id,
         ):
+            if chunk.startswith("__thread_id__:"):
+                thread_id = chunk.split(":", 1)[1]
+                continue
             chunks.append(chunk)
         return success_response(data=ChatResponseData(reply="".join(chunks)))
 
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             async for delta in service.chat(
-                messages=messages, user_id=current_user.id, system_prompt=request.system_prompt
+                messages=messages, user_id=current_user.id,
+                system_prompt=request.system_prompt,
+                thread_id=request.thread_id,
             ):
+                if delta.startswith("__thread_id__:"):
+                    tid = delta.split(":", 1)[1]
+                    payload = json.dumps({"type": "thread_id", "thread_id": tid})
+                    yield f"data: {payload}\n\n"
+                    continue
                 payload = json.dumps({"type": "delta", "content": delta})
                 yield f"data: {payload}\n\n"
             yield 'data: {"type": "done"}\n\n'
@@ -809,6 +825,70 @@ async def ingest_batch(
             results=item_results,
         )
     )
+
+
+# === Conversation Thread Management ===
+
+
+@router.get(
+    "/conversations",
+    response_model=ResponseBase[ConversationListResponse],
+)
+async def list_conversations(
+    current_user: UserInDB = Depends(get_current_user),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """List user's conversation threads, sorted by most recent."""
+    service = AssistantService()
+    data = await service.list_conversations(
+        user_id=current_user.id, page=page, page_size=page_size,
+    )
+    return success_response(data=ConversationListResponse(**data))
+
+
+@router.get("/conversations/{thread_id}")
+async def get_conversation(
+    thread_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Get a single conversation thread metadata."""
+    service = AssistantService()
+    data = await service.get_conversation(user_id=current_user.id, thread_id=thread_id)
+    if not data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="对话不存在")
+    return success_response(data=data)
+
+
+@router.patch("/conversations/{thread_id}")
+async def update_conversation(
+    thread_id: str,
+    body: ConversationUpdateRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Update conversation title."""
+    if not body.title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="标题不能为空")
+    service = AssistantService()
+    ok = await service.update_conversation(
+        user_id=current_user.id, thread_id=thread_id, title=body.title,
+    )
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="对话不存在")
+    return success_response(message="标题已更新")
+
+
+@router.delete("/conversations/{thread_id}")
+async def delete_conversation(
+    thread_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    """Delete (archive) a conversation and clean up checkpoint data."""
+    service = AssistantService()
+    ok = await service.delete_conversation(user_id=current_user.id, thread_id=thread_id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="对话不存在")
+    return success_response(message="对话已删除")
 
 
 # === Audit Log Endpoints ===

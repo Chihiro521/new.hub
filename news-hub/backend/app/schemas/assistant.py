@@ -29,6 +29,10 @@ class ChatRequest(BaseModel):
         max_length=2000,
         description="自定义系统提示词，覆盖默认助手行为",
     )
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="对话线程ID。不传则创建新对话，传入则继续已有对话。",
+    )
 
 
 class SummarizeRequest(BaseModel):
@@ -373,3 +377,30 @@ class DebateResearchRequest(BaseModel):
         max_length=2000,
         description="自定义系统提示词，影响所有代理行为",
     )
+
+
+# === Conversation Thread Management ===
+
+
+class ConversationThread(BaseModel):
+    """A conversation thread summary."""
+
+    thread_id: str
+    title: str
+    created_at: datetime
+    last_message_at: datetime
+    message_count: int = 0
+    last_user_message: str = ""
+
+
+class ConversationListResponse(BaseModel):
+    """Paginated conversation list."""
+
+    threads: List[ConversationThread] = Field(default_factory=list)
+    total: int = 0
+
+
+class ConversationUpdateRequest(BaseModel):
+    """Request to update a conversation thread."""
+
+    title: Optional[str] = Field(None, max_length=200, description="新标题")

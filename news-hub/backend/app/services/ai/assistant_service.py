@@ -1,9 +1,12 @@
 """AI assistant orchestration service."""
 
 import asyncio
+import hashlib
 import json
 import re
 import time
+import uuid
+from datetime import datetime, timedelta
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from bson import ObjectId
@@ -14,6 +17,7 @@ from app.db.mongo import mongodb
 from app.schemas.assistant import (
     AugmentedSearchResponseData,
     ClassifyResponseData,
+    ConversationThread,
     DiscoverSourcesResponseData,
     SearchResultItem,
     SourceSuggestion,
@@ -42,18 +46,68 @@ class AssistantService:
         self.external_ingestion = ExternalIngestionService()
 
     async def chat(
-        self, messages: List[dict], user_id: str, system_prompt: Optional[str] = None,
+        self, messages: List[dict], user_id: str,
+        system_prompt: Optional[str] = None,
+        thread_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Stream assistant chat response chunks via LangGraph agent.
 
-        Now uses the same LangGraph ResearchAgent as /chat-rag and /research,
-        giving the basic chat endpoint full tool-calling capabilities.
+        If thread_id is None, creates a new conversation thread.
+        If thread_id is provided, resumes the existing conversation.
+        Yields the thread_id as the first chunk (prefixed with __thread_id__:).
         """
         from app.services.ai.agents.research_agent import ResearchAgent
 
+        # Resolve or create thread
+        if thread_id:
+            # Verify ownership
+            doc = await mongodb.conversation_threads.find_one(
+                {"thread_id": thread_id, "user_id": user_id, "is_archived": {"$ne": True}}
+            )
+            if not doc:
+                thread_id = None  # Fall through to create new
+
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
+            # Auto-generate title from first user message
+            first_msg = ""
+            for m in messages:
+                if m.get("role") == "user":
+                    first_msg = m.get("content", "")
+                    break
+            title = first_msg[:50].strip() or "新对话"
+            await mongodb.conversation_threads.insert_one({
+                "thread_id": thread_id,
+                "user_id": user_id,
+                "title": title,
+                "created_at": datetime.utcnow(),
+                "last_message_at": datetime.utcnow(),
+                "message_count": 1,
+                "last_user_message": first_msg[:200],
+                "is_archived": False,
+            })
+        else:
+            # Update existing thread metadata
+            last_msg = ""
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    last_msg = m.get("content", "")
+                    break
+            await mongodb.conversation_threads.update_one(
+                {"thread_id": thread_id},
+                {"$set": {
+                    "last_message_at": datetime.utcnow(),
+                    "last_user_message": last_msg[:200],
+                }, "$inc": {"message_count": 1}},
+            )
+
+        # Emit thread_id as first chunk so frontend knows which thread
+        yield f"__thread_id__:{thread_id}"
+
         agent = ResearchAgent()
         async for chunk in agent.chat(
-            messages=messages, user_id=user_id, system_prompt=system_prompt
+            messages=messages, user_id=user_id,
+            system_prompt=system_prompt, thread_id=thread_id,
         ):
             yield chunk
 
@@ -84,19 +138,18 @@ class AssistantService:
 
         prompt = SUMMARIZE_TEMPLATE.format(title=title, source=source, content=content)
         try:
-            response = await self.client.chat.completions.create(
-                model=settings.openai_model,
+            cache_key = f"summarize::{settings.openai_model}::{prompt}"
+            summary = await self._cached_completion(
+                cache_key=cache_key,
                 messages=[
                     {"role": "system", "content": SYSTEM_CHAT},
                     {"role": "user", "content": prompt},
                 ],
-                stream=False,
+                model=settings.openai_model,
             )
-            summary = (response.choices[0].message.content or "").strip()
             if not summary:
                 raise ValueError("Empty AI summary")
 
-            usage = response.usage
             await self.audit.log(
                 user_id=user_id,
                 action="summarize",
@@ -104,10 +157,6 @@ class AssistantService:
                 output_summary=summary[:200],
                 model=settings.openai_model,
                 latency_ms=int((time.monotonic() - t0) * 1000),
-                token_usage={
-                    "prompt": usage.prompt_tokens if usage else 0,
-                    "completion": usage.completion_tokens if usage else 0,
-                },
             )
             return SummarizeResponseData(news_id=news_id, summary=summary, method="ai")
         except Exception as e:
@@ -159,19 +208,19 @@ class AssistantService:
         )
 
         try:
-            response = await self.client.chat.completions.create(
-                model=settings.openai_model,
+            cache_key = f"classify::{settings.openai_model}::{prompt}"
+            raw = await self._cached_completion(
+                cache_key=cache_key,
                 messages=[
                     {"role": "system", "content": SYSTEM_CHAT},
                     {"role": "user", "content": prompt},
                 ],
-                stream=False,
+                model=settings.openai_model,
             )
-            raw = (response.choices[0].message.content or "[]").strip()
+            raw = raw or "[]"
             parsed = json.loads(raw)
             tags = [str(tag) for tag in parsed if isinstance(tag, str)]
 
-            usage = response.usage
             await self.audit.log(
                 user_id=user_id,
                 action="classify",
@@ -179,10 +228,6 @@ class AssistantService:
                 output_summary=json.dumps(tags, ensure_ascii=False)[:200],
                 model=settings.openai_model,
                 latency_ms=int((time.monotonic() - t0) * 1000),
-                token_usage={
-                    "prompt": usage.prompt_tokens if usage else 0,
-                    "completion": usage.completion_tokens if usage else 0,
-                },
             )
             return ClassifyResponseData(
                 news_id=news_id, suggested_tags=tags, method="ai"
@@ -585,3 +630,119 @@ class AssistantService:
                 except Exception:
                     return []
             return []
+
+    # === Conversation Thread Management ===
+
+    async def list_conversations(
+        self, user_id: str, page: int = 1, page_size: int = 20,
+    ) -> Dict[str, Any]:
+        """List user's conversation threads, sorted by most recent."""
+        query = {"user_id": user_id, "is_archived": {"$ne": True}}
+        total = await mongodb.conversation_threads.count_documents(query)
+        skip = (page - 1) * page_size
+        cursor = mongodb.conversation_threads.find(query).sort(
+            "last_message_at", -1
+        ).skip(skip).limit(page_size)
+        threads = []
+        async for doc in cursor:
+            threads.append(ConversationThread(
+                thread_id=doc["thread_id"],
+                title=doc.get("title", ""),
+                created_at=doc.get("created_at", datetime.utcnow()),
+                last_message_at=doc.get("last_message_at", datetime.utcnow()),
+                message_count=doc.get("message_count", 0),
+                last_user_message=doc.get("last_user_message", ""),
+            ))
+        return {"threads": threads, "total": total}
+
+    async def get_conversation(self, user_id: str, thread_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single conversation thread metadata."""
+        doc = await mongodb.conversation_threads.find_one(
+            {"thread_id": thread_id, "user_id": user_id}
+        )
+        if not doc:
+            return None
+        return {
+            "thread_id": doc["thread_id"],
+            "title": doc.get("title", ""),
+            "created_at": doc.get("created_at"),
+            "last_message_at": doc.get("last_message_at"),
+            "message_count": doc.get("message_count", 0),
+            "last_user_message": doc.get("last_user_message", ""),
+            "is_archived": doc.get("is_archived", False),
+        }
+
+    async def update_conversation(self, user_id: str, thread_id: str, title: str) -> bool:
+        """Update conversation title."""
+        result = await mongodb.conversation_threads.update_one(
+            {"thread_id": thread_id, "user_id": user_id},
+            {"$set": {"title": title}},
+        )
+        return result.modified_count > 0
+
+    async def delete_conversation(self, user_id: str, thread_id: str) -> bool:
+        """Archive a conversation and clean up checkpoint data."""
+        result = await mongodb.conversation_threads.update_one(
+            {"thread_id": thread_id, "user_id": user_id},
+            {"$set": {"is_archived": True}},
+        )
+        if result.modified_count == 0:
+            return False
+        # Clean up LangGraph checkpoint data
+        try:
+            await mongodb.db.langgraph_checkpoints.delete_many(
+                {"thread_id": thread_id}
+            )
+            await mongodb.db.langgraph_writes.delete_many(
+                {"thread_id": thread_id}
+            )
+        except Exception as e:
+            logger.warning(f"Failed to clean up checkpoints for thread {thread_id}: {e}")
+        return True
+
+    # === Cached LLM Completion (for AsyncOpenAI client) ===
+
+    async def _cached_completion(self, cache_key: str, messages: list, model: str) -> Optional[str]:
+        """Check MongoDB cache before calling OpenAI. Returns None on cache miss + API failure."""
+        if not settings.llm_cache_enabled:
+            response = await self.client.chat.completions.create(
+                model=model, messages=messages, stream=False,
+            )
+            return (response.choices[0].message.content or "").strip()
+
+        key_hash = hashlib.sha256(cache_key.encode()).hexdigest()
+        # Check cache
+        try:
+            doc = await mongodb.llm_cache.find_one({"prompt_hash": key_hash})
+            if doc:
+                await mongodb.llm_cache.update_one(
+                    {"_id": doc["_id"]}, {"$inc": {"hit_count": 1}}
+                )
+                logger.debug(f"AsyncOpenAI cache HIT: {key_hash[:12]}...")
+                return doc["response"]
+        except Exception as e:
+            logger.warning(f"Cache lookup failed: {e}")
+
+        # Cache miss — call API
+        response = await self.client.chat.completions.create(
+            model=model, messages=messages, stream=False,
+        )
+        text = (response.choices[0].message.content or "").strip()
+
+        # Store in cache
+        if text:
+            try:
+                await mongodb.llm_cache.update_one(
+                    {"prompt_hash": key_hash},
+                    {"$set": {
+                        "model": model,
+                        "response": text,
+                        "created_at": datetime.utcnow(),
+                        "ttl_expires_at": datetime.utcnow() + timedelta(hours=settings.llm_cache_ttl_hours),
+                    }, "$setOnInsert": {"hit_count": 0}},
+                    upsert=True,
+                )
+            except Exception as e:
+                logger.warning(f"Cache store failed: {e}")
+
+        return text

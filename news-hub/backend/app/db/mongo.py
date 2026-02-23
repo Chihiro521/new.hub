@@ -94,6 +94,16 @@ class MongoDB:
         """Asynchronous ingestion job tracking collection."""
         return self.db.ingest_jobs
 
+    @property
+    def conversation_threads(self):
+        """Conversation thread metadata collection."""
+        return self.db.conversation_threads
+
+    @property
+    def llm_cache(self):
+        """LLM response cache collection."""
+        return self.db.llm_cache
+
     async def create_indexes(self) -> None:
         """
         Create database indexes for optimal query performance.
@@ -139,6 +149,21 @@ class MongoDB:
         # Ingest job indexes
         await self.ingest_jobs.create_index([("user_id", 1), ("created_at", -1)])
         await self.ingest_jobs.create_index([("status", 1), ("updated_at", -1)])
+
+        # Conversation thread indexes
+        await self.conversation_threads.create_index(
+            [("user_id", 1), ("last_message_at", -1)]
+        )
+        await self.conversation_threads.create_index("thread_id", unique=True)
+        await self.conversation_threads.create_index(
+            [("user_id", 1), ("is_archived", 1)]
+        )
+
+        # LLM cache indexes
+        await self.llm_cache.create_index("prompt_hash", unique=True)
+        await self.llm_cache.create_index(
+            "ttl_expires_at", expireAfterSeconds=0
+        )
 
         logger.info("MongoDB indexes created")
 

@@ -119,6 +119,10 @@ class Settings(BaseSettings):
     crawl4ai_api_token: Optional[str] = None
     crawl4ai_timeout: int = 120
 
+    # === LLM Cache ===
+    llm_cache_enabled: bool = True
+    llm_cache_ttl_hours: int = 24
+
     # === LLM Formatting (Phase 2: Anthropic-compatible API) ===
     llm_api_base: str = "https://right.codes/claude-aws"
     llm_api_key: str = "sk-9c0939e08d554b3083ffb09f49dee73d"
