@@ -45,6 +45,17 @@ class AssistantService:
         self.external_search_router = ExternalSearchRouter()
         self.external_ingestion = ExternalIngestionService()
 
+    @staticmethod
+    def _is_meaningful_chat_chunk(chunk: str) -> bool:
+        """Whether a streamed chunk contains real reply text (not tool-status noise)."""
+        stripped = chunk.strip()
+        if not stripped:
+            return False
+        # Tool status chunks emitted by ResearchAgent: "[🔍 tool_name...]"
+        if re.fullmatch(r"\[🔍\s+.+\.\.\.\]", stripped):
+            return False
+        return True
+
     async def chat(
         self, messages: List[dict], user_id: str,
         system_prompt: Optional[str] = None,
@@ -105,11 +116,34 @@ class AssistantService:
         yield f"__thread_id__:{thread_id}"
 
         agent = ResearchAgent()
+        emitted_meaningful = False
         async for chunk in agent.chat(
             messages=messages, user_id=user_id,
             system_prompt=system_prompt, thread_id=thread_id,
         ):
+            if self._is_meaningful_chat_chunk(chunk):
+                emitted_meaningful = True
             yield chunk
+
+        # Hard fallback: if LangGraph produced no meaningful text, request one plain response.
+        if not emitted_meaningful:
+            logger.warning(
+                "assistant_chat_empty_reply user_id={} thread_id={} falling back to plain completion",
+                user_id,
+                thread_id,
+            )
+            try:
+                fallback = await asyncio.wait_for(
+                    self._chat_plain_fallback(messages=messages, system_prompt=system_prompt),
+                    timeout=15,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Plain chat fallback timed out (15s) user_id={}", user_id)
+                fallback = ""
+            if fallback:
+                yield fallback
+            else:
+                yield "（模型未返回正文，请稍后重试）"
 
     async def summarize(self, news_id: str, user_id: str) -> SummarizeResponseData:
         """Summarize a news item with AI, fallback to extractive summary."""
@@ -701,6 +735,41 @@ class AssistantService:
         return True
 
     # === Cached LLM Completion (for AsyncOpenAI client) ===
+
+    async def _chat_plain_fallback(
+        self,
+        messages: List[dict],
+        system_prompt: Optional[str] = None,
+    ) -> str:
+        """Generate a plain non-tool response when LangGraph path yields nothing."""
+        if self.client is None:
+            return ""
+        try:
+            payload: List[Dict[str, str]] = []
+            prompt = (system_prompt or SYSTEM_CHAT).strip()
+            if prompt:
+                payload.append({"role": "system", "content": prompt})
+            for msg in messages[-20:]:
+                role = str(msg.get("role", "user"))
+                if role not in {"user", "assistant", "system"}:
+                    continue
+                content = str(msg.get("content", "")).strip()
+                if not content:
+                    continue
+                payload.append({"role": role, "content": content})
+
+            if not payload:
+                return ""
+
+            response = await self.client.chat.completions.create(
+                model=settings.openai_model,
+                messages=payload,
+                stream=False,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as e:
+            logger.warning(f"Plain chat fallback failed: {e}")
+            return ""
 
     async def _cached_completion(self, cache_key: str, messages: list, model: str) -> Optional[str]:
         """Check MongoDB cache before calling OpenAI. Returns None on cache miss + API failure."""

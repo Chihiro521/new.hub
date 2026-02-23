@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import AsyncGenerator, List, Optional
 
@@ -49,6 +50,12 @@ from app.services.ai.assistant_service import AssistantService
 from app.services.ai.audit import AuditLogger
 
 router = APIRouter(prefix="/assistant", tags=["AI Assistant"])
+_RESEARCH_STATUS_RE = re.compile(r"^\[(Plan|Search|Select|Read|Extract|Search2|Read2|Done)\]")
+_RESEARCH_FALLBACK_REPORT = (
+    "## 研究结果\n\n"
+    "研究流程已完成，但未收到最终报告正文。\n\n"
+    "请重试一次；若持续出现，请检查 deep_research_agent 的合成阶段日志。"
+)
 
 
 def _service_error_to_http(error: ValueError) -> HTTPException:
@@ -77,6 +84,8 @@ async def chat_with_assistant(
     if not request.stream:
         chunks = []
         thread_id = None
+        chunk_count = 0
+        chunk_chars = 0
         async for chunk in service.chat(
             messages=messages, user_id=current_user.id,
             system_prompt=request.system_prompt,
@@ -86,9 +95,24 @@ async def chat_with_assistant(
                 thread_id = chunk.split(":", 1)[1]
                 continue
             chunks.append(chunk)
-        return success_response(data=ChatResponseData(reply="".join(chunks)))
+            chunk_count += 1
+            chunk_chars += len(chunk)
+        reply = "".join(chunks)
+        logger.info(
+            "chat_summary stream=False user_id={} thread_id={} chunks={} chars={} empty_reply={}",
+            current_user.id,
+            thread_id or request.thread_id or "",
+            chunk_count,
+            chunk_chars,
+            not bool(reply.strip()),
+        )
+        return success_response(data=ChatResponseData(reply=reply))
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        thread_id = request.thread_id or ""
+        delta_count = 0
+        delta_chars = 0
+        error_msg: Optional[str] = None
         try:
             async for delta in service.chat(
                 messages=messages, user_id=current_user.id,
@@ -97,15 +121,29 @@ async def chat_with_assistant(
             ):
                 if delta.startswith("__thread_id__:"):
                     tid = delta.split(":", 1)[1]
+                    thread_id = tid
                     payload = json.dumps({"type": "thread_id", "thread_id": tid})
                     yield f"data: {payload}\n\n"
                     continue
                 payload = json.dumps({"type": "delta", "content": delta})
+                delta_count += 1
+                delta_chars += len(delta)
                 yield f"data: {payload}\n\n"
             yield 'data: {"type": "done"}\n\n'
         except Exception as e:
+            error_msg = str(e)
             error_payload = json.dumps({"type": "error", "content": str(e)})
             yield f"data: {error_payload}\n\n"
+        finally:
+            logger.info(
+                "chat_summary stream=True user_id={} thread_id={} deltas={} chars={} empty_reply={} error={}",
+                current_user.id,
+                thread_id,
+                delta_count,
+                delta_chars,
+                delta_chars == 0,
+                error_msg or "",
+            )
 
     return StreamingResponse(
         event_generator(),
@@ -1066,30 +1104,104 @@ async def deep_research(
 
     if not request.stream:
         chunks = []
+        has_status = False
+        has_report = False
+        chunk_count = 0
         async for chunk in agent.research(
             query=request.query,
             user_id=current_user.id,
             system_prompt=request.system_prompt,
         ):
             chunks.append(chunk)
+            chunk_count += 1
+            stripped = chunk.strip()
+            if stripped and _RESEARCH_STATUS_RE.match(stripped):
+                has_status = True
+            if "[REPORT_START]" in chunk or "\n---\n" in chunk:
+                has_report = True
+        fallback_injected = has_status and not has_report
+        if not fallback_injected and has_report:
+            # Check if there's actual content after [REPORT_START]
+            joined = "".join(chunks)
+            report_start_idx = joined.find("[REPORT_START]")
+            if report_start_idx >= 0:
+                after_marker = joined[report_start_idx + len("[REPORT_START]"):].strip()
+                if len(after_marker) < 10:
+                    fallback_injected = True
+        if fallback_injected:
+            chunks.append(f"\n[REPORT_START]\n{_RESEARCH_FALLBACK_REPORT}")
         full_report = "".join(chunks)
+        logger.info(
+            "deep_research_summary stream=False user_id={} query={} chunks={} chars={} has_status={} has_report={} fallback_injected={}",
+            current_user.id,
+            request.query[:120],
+            chunk_count,
+            len(full_report),
+            has_status,
+            has_report,
+            fallback_injected,
+        )
         return success_response(
             data=DeepResearchResponseData(query=request.query, report=full_report)
         )
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        has_status = False
+        has_report = False
+        report_content_chars = 0
+        delta_count = 0
+        delta_chars = 0
+        fallback_injected = False
+        stream_error: Optional[str] = None
         try:
             async for delta in agent.research(
                 query=request.query,
                 user_id=current_user.id,
                 system_prompt=request.system_prompt,
             ):
+                delta_count += 1
+                delta_chars += len(delta)
+                stripped = delta.strip()
+                if stripped and _RESEARCH_STATUS_RE.match(stripped):
+                    has_status = True
+                if "[REPORT_START]" in delta or "\n---\n" in delta:
+                    has_report = True
+                elif has_report:
+                    # Count chars of actual report content (after marker)
+                    report_content_chars += len(delta)
                 payload = json.dumps({"type": "delta", "content": delta})
                 yield f"data: {payload}\n\n"
+            # Inject fallback if no report marker OR marker present but no content after it
+            if has_status and (not has_report or report_content_chars < 10):
+                fallback_injected = True
+                fallback_content = f"\n[REPORT_START]\n{_RESEARCH_FALLBACK_REPORT}"
+                delta_count += 1
+                delta_chars += len(fallback_content)
+                fallback_payload = json.dumps(
+                    {
+                        "type": "delta",
+                        "content": fallback_content,
+                    }
+                )
+                yield f"data: {fallback_payload}\n\n"
             yield 'data: {"type": "done"}\n\n'
         except Exception as e:
+            stream_error = str(e)
             error_payload = json.dumps({"type": "error", "content": str(e)})
             yield f"data: {error_payload}\n\n"
+        finally:
+            logger.info(
+                "deep_research_summary stream=True user_id={} query={} deltas={} chars={} has_status={} has_report={} report_content_chars={} fallback_injected={} error={}",
+                current_user.id,
+                request.query[:120],
+                delta_count,
+                delta_chars,
+                has_status,
+                has_report,
+                report_content_chars,
+                fallback_injected,
+                stream_error or "",
+            )
 
     return StreamingResponse(
         event_generator(),

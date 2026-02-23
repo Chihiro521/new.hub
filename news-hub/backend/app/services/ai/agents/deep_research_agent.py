@@ -127,11 +127,52 @@ SYNTHESIZE_PROMPT = """你是研究报告撰写专家。基于以下多轮搜索
 请直接输出报告:"""
 
 DEFAULT_RESEARCH_SYSTEM = "你是 News Hub 的深度研究助手，擅长多步骤信息搜集和综合分析。"
+REPORT_SEPARATOR = "\n[REPORT_START]\n"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _content_to_text(content: Any) -> str:
+    """Best-effort extraction of plain text from model content payloads."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [_content_to_text(item) for item in content]
+        return "".join(p for p in parts if p)
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            return text
+        if isinstance(text, dict):
+            nested = text.get("value") or text.get("text")
+            if isinstance(nested, str):
+                return nested
+        for key in ("output_text", "content", "value", "delta"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (list, dict)):
+                nested = _content_to_text(value)
+                if nested:
+                    return nested
+        return ""
+    text_attr = getattr(content, "text", None)
+    if isinstance(text_attr, str):
+        return text_attr
+    content_attr = getattr(content, "content", None)
+    if content_attr is not None and content_attr is not content:
+        return _content_to_text(content_attr)
+    # Final fallback: stringify non-empty objects
+    # Be conservative: only return if it looks like real text (not repr of objects)
+    fallback = str(content).strip()
+    if fallback and fallback not in ("None", "", "{}") and len(fallback) > 5 and not fallback.startswith(("AIMessage", "HumanMessage", "content=")):
+        return fallback
+    return ""
+
 
 async def _scrape_light(url: str, timeout_s: int = 75) -> Dict[str, Any]:
     """Scrape a single URL using light mode with timeout."""
@@ -158,25 +199,91 @@ class DeepResearchAgent:
     def __init__(self):
         self.audit = AuditLogger()
 
+    @staticmethod
+    def _build_fallback_report(state: ResearchState) -> str:
+        """Build a deterministic markdown report when LLM synthesis returns empty."""
+        query = str(state.get("query", "")).strip()
+        search_results = state.get("search_results", []) or []
+        page_contents = state.get("page_contents", []) or []
+        round2_results = state.get("round2_results", []) or []
+        round2_contents = state.get("round2_contents", []) or []
+
+        lines: List[str] = []
+        lines.append("## 研究摘要")
+        lines.append("")
+        lines.append("本次研究流程已完成，但模型整合阶段未返回完整文本。以下为基于已抓取数据自动生成的结构化报告。")
+        lines.append("")
+        if query:
+            lines.append(f"- 研究主题：{query}")
+        lines.append(f"- 第一轮检索结果：{len(search_results)} 条")
+        lines.append(f"- 第一轮深度阅读成功：{len(page_contents)} 条")
+        lines.append(f"- 第二轮定向检索结果：{len(round2_results)} 条")
+        lines.append(f"- 第二轮深度阅读成功：{len(round2_contents)} 条")
+        lines.append("")
+
+        lines.append("## 第一轮高相关来源")
+        lines.append("")
+        if search_results:
+            for r in search_results[:10]:
+                title = str(r.get("title", "")).strip() or "N/A"
+                url = str(r.get("url", "")).strip() or ""
+                desc = str(r.get("description", "")).strip()
+                source = f"- [{title}]({url})" if url else f"- {title}"
+                if desc:
+                    source += f"：{desc[:120]}"
+                lines.append(source)
+        else:
+            lines.append("- （无）")
+        lines.append("")
+
+        lines.append("## 深度阅读要点")
+        lines.append("")
+        if page_contents or round2_contents:
+            merged_pages = (page_contents + round2_contents)[:8]
+            for p in merged_pages:
+                title = str(p.get("title", "")).strip() or "N/A"
+                url = str(p.get("url", "")).strip() or ""
+                content = str(p.get("content", "")).strip()
+                preview = content[:260].replace("\n", " ").strip()
+                source = f"- [{title}]({url})" if url else f"- {title}"
+                if preview:
+                    source += f"：{preview}"
+                lines.append(source)
+        else:
+            lines.append("- （无）")
+        lines.append("")
+
+        lines.append("## 后续建议")
+        lines.append("")
+        lines.append("1. 重试一次深度研究（可能是模型瞬时超时或空响应）。")
+        lines.append("2. 缩小主题范围并指定时间窗（可提升最终整合稳定性）。")
+        lines.append("3. 对关键来源执行二次核验（优先官方访谈、制作人员采访、发行方资料）。")
+        lines.append("")
+
+        return "\n".join(lines).strip()
+
     def _build_graph(self, user_id: str) -> Any:
         model = get_chat_model()
         if model is None:
             return None
 
         async def _llm(system: str, user: str, timeout_s: int = 90) -> str:
-            for attempt in range(3):
+            for attempt in range(2):
                 try:
                     # Brief pause between LLM calls to avoid proxy rate limits
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(0.3)
                     resp = await asyncio.wait_for(
                         model.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]),
                         timeout=timeout_s,
                     )
-                    return resp.content or ""
+                    text = _content_to_text(getattr(resp, "content", None))
+                    if text:
+                        return text
+                    logger.warning(f"LLM attempt {attempt+1} returned empty/non-text content")
                 except Exception as e:
                     logger.warning(f"LLM attempt {attempt+1} failed: {e}")
-                    if attempt < 2:
-                        await asyncio.sleep(5)
+                    if attempt < 1:
+                        await asyncio.sleep(1)
             return ""
 
         # ---- Node: plan ----
@@ -205,7 +312,11 @@ class DeepResearchAgent:
             prov = []
             es_count = web_count = 0
 
-            for q in state["search_queries"]:
+            async def _search_one_query(q: str):
+                """Run ES + web search for a single query, return (results, provenance, es_hits, web_hits)."""
+                results = []
+                p = []
+                es_h = web_h = 0
                 # ES
                 try:
                     es_raw = await search_user.ainvoke({"query": q, "limit": 3})
@@ -213,12 +324,11 @@ class DeepResearchAgent:
                     hits = es_data.get("results", [])
                     for r in hits:
                         r["origin"] = "internal"
-                        all_results.append(r)
-                    es_count += len(hits)
-                    prov.append({"phase": "search", "source": "elasticsearch", "query": q, "hits": len(hits)})
+                        results.append(r)
+                    es_h = len(hits)
+                    p.append({"phase": "search", "source": "elasticsearch", "query": q, "hits": len(hits)})
                 except Exception as e:
-                    prov.append({"phase": "search", "source": "elasticsearch", "query": q, "hits": 0, "error": str(e)})
-
+                    p.append({"phase": "search", "source": "elasticsearch", "query": q, "hits": 0, "error": str(e)})
                 # Web
                 try:
                     web_raw = await web_search.ainvoke({"query": q, "max_results": 8})
@@ -227,12 +337,28 @@ class DeepResearchAgent:
                     provider = web_data.get("provider", "unknown")
                     for r in hits:
                         r["origin"] = "external"
-                        all_results.append(r)
-                    web_count += len(hits)
-                    prov.append({"phase": "search", "source": f"web/{provider}", "query": q, "hits": len(hits),
-                                 "engines": list({r.get("engine", "?") for r in hits})})
+                        results.append(r)
+                    web_h = len(hits)
+                    p.append({"phase": "search", "source": f"web/{provider}", "query": q, "hits": len(hits),
+                              "engines": list({r.get("engine", "?") for r in hits})})
                 except Exception as e:
-                    prov.append({"phase": "search", "source": "web", "query": q, "hits": 0, "error": str(e)})
+                    p.append({"phase": "search", "source": "web", "query": q, "hits": 0, "error": str(e)})
+                return results, p, es_h, web_h
+
+            # Run all queries in parallel
+            query_results = await asyncio.gather(
+                *[_search_one_query(q) for q in state["search_queries"]],
+                return_exceptions=True,
+            )
+            for qr in query_results:
+                if isinstance(qr, Exception):
+                    logger.warning(f"Search query failed: {qr}")
+                    continue
+                results, p, es_h, web_h = qr
+                all_results.extend(results)
+                prov.extend(p)
+                es_count += es_h
+                web_count += web_h
 
             # Deduplicate
             seen = set()
@@ -296,8 +422,8 @@ class DeepResearchAgent:
                     continue
                 if result and result.get("content"):
                     content = result["content"]
-                    if len(content) > 8000:
-                        content = content[:8000]
+                    if len(content) > 6000:
+                        content = content[:6000]
                     contents.append({"title": result.get("title", ""), "url": url, "content": content})
                     prov.append({"phase": "deep_read", "url": url, "status": "ok",
                                  "chars": len(content), "quality": result.get("quality_score", 0)})
@@ -353,7 +479,10 @@ class DeepResearchAgent:
             prov = []
             existing_urls = {r.get("url") for r in state["search_results"]}
 
-            for q in queries:
+            async def _targeted_one(q: str):
+                """Run a single targeted web search query."""
+                results = []
+                p_item = None
                 try:
                     raw = await web_search.ainvoke({"query": q, "max_results": 5})
                     data = json.loads(raw) if isinstance(raw, str) else raw
@@ -361,11 +490,27 @@ class DeepResearchAgent:
                     new_hits = [r for r in hits if r.get("url") not in existing_urls]
                     for r in new_hits:
                         r["origin"] = "external_r2"
-                        all_results.append(r)
-                        existing_urls.add(r.get("url"))
-                    prov.append({"phase": "targeted_search", "query": q, "hits": len(hits), "new": len(new_hits)})
+                        results.append(r)
+                    p_item = {"phase": "targeted_search", "query": q, "hits": len(hits), "new": len(new_hits)}
                 except Exception as e:
-                    prov.append({"phase": "targeted_search", "query": q, "hits": 0, "error": str(e)})
+                    p_item = {"phase": "targeted_search", "query": q, "hits": 0, "error": str(e)}
+                return results, p_item
+
+            # Run all targeted queries in parallel
+            targeted_results = await asyncio.gather(
+                *[_targeted_one(q) for q in queries],
+                return_exceptions=True,
+            )
+            for tr in targeted_results:
+                if isinstance(tr, Exception):
+                    logger.warning(f"Targeted search query failed: {tr}")
+                    continue
+                results, p_item = tr
+                for r in results:
+                    existing_urls.add(r.get("url"))
+                all_results.extend(results)
+                if p_item:
+                    prov.append(p_item)
 
             # Deduplicate
             seen = set()
@@ -420,8 +565,8 @@ class DeepResearchAgent:
                     continue
                 if result and result.get("content"):
                     content = result["content"]
-                    if len(content) > 8000:
-                        content = content[:8000]
+                    if len(content) > 6000:
+                        content = content[:6000]
                     contents.append({"title": result.get("title", ""), "url": url, "content": content})
                     prov.append({"phase": "deep_read_2", "url": url, "status": "ok", "chars": len(content)})
                 else:
@@ -436,14 +581,14 @@ class DeepResearchAgent:
         # ---- Node: synthesize ----
         async def synthesize(state: ResearchState) -> dict:
             # Brief cooldown to avoid proxy rate limits after many LLM calls
-            await asyncio.sleep(5)
+            await asyncio.sleep(0.5)
 
             search_summary = "\n".join(
                 f"- [{r.get('title', 'N/A')}]({r.get('url', '')}): {r.get('description', '')[:80]}"
                 for r in state["search_results"][:12]
             )
             read_content = "\n\n".join(
-                f"### {p['title']}\nURL: {p['url']}\n{p['content'][:1500]}"
+                f"### {p['title']}\nURL: {p['url']}\n{p['content'][:1200]}"
                 for p in state["page_contents"]
             ) or "(无)"
             round2_summary = "\n".join(
@@ -451,7 +596,7 @@ class DeepResearchAgent:
                 for r in state["round2_results"][:8]
             ) or "(无)"
             round2_content = "\n\n".join(
-                f"### {p['title']}\nURL: {p['url']}\n{p['content'][:1500]}"
+                f"### {p['title']}\nURL: {p['url']}\n{p['content'][:1200]}"
                 for p in state["round2_contents"]
             ) or "(无)"
 
@@ -462,7 +607,10 @@ class DeepResearchAgent:
                 round2_summary=round2_summary,
                 round2_content=round2_content,
             )
-            report = await _llm(state.get("system_prompt", DEFAULT_RESEARCH_SYSTEM), prompt, timeout_s=180)
+            report = await _llm(state.get("system_prompt", DEFAULT_RESEARCH_SYSTEM), prompt, timeout_s=60)
+            if not isinstance(report, str) or not report.strip():
+                logger.warning("Synthesize returned empty report, using deterministic fallback report")
+                report = self._build_fallback_report(state)
 
             sources = []
             seen = set()
@@ -551,10 +699,43 @@ class DeepResearchAgent:
                 for node_name, node_output in event.items():
                     for status in node_output.get("status_updates", []):
                         yield status + "\n"
-                    if node_name == "synthesize" and node_output.get("report"):
-                        yield "\n---\n\n"
-                        yield node_output["report"]
-                        final_state = node_output
+                    if node_name == "synthesize":
+                        raw_report = node_output.get("report")
+                        report_text = raw_report if isinstance(raw_report, str) else str(raw_report or "")
+                        report_text = report_text.strip()
+                        logger.info(
+                            "deep_research synthesize output: report_len={} raw_type={} sources={}",
+                            len(report_text), type(raw_report).__name__,
+                            len(node_output.get("sources", [])),
+                        )
+                        if not report_text:
+                            source_count = len(node_output.get("sources", []))
+                            logger.warning("Deep research synthesize returned empty report, using fallback text")
+                            report_text = (
+                                "## 研究结果\n\n"
+                                "本次深度研究流程已完成，但最终整合阶段未返回正文内容。\n\n"
+                                f"- 主题：{query}\n"
+                                f"- 已汇总来源：{source_count} 条\n\n"
+                                "请重试一次，或缩小研究范围后再试。"
+                            )
+                        # Yield separator + first chunk together to reduce
+                        # chance of TCP split between marker and content
+                        first_chunk = report_text[:80]
+                        yield REPORT_SEPARATOR + first_chunk
+                        # Stream remaining report in small chunks
+                        chunk_size = 80
+                        for i in range(80, len(report_text), chunk_size):
+                            yield report_text[i:i + chunk_size]
+                        final_state = {**node_output, "report": report_text}
+
+            # Safety net: if graph completed but synthesize was never reached
+            if final_state is None:
+                logger.warning("deep_research graph completed without synthesize output, injecting fallback")
+                yield REPORT_SEPARATOR
+                fallback = self._build_fallback_report(initial)
+                chunk_size = 80
+                for i in range(0, len(fallback), chunk_size):
+                    yield fallback[i:i + chunk_size]
 
             await self.audit.log(
                 user_id=user_id,

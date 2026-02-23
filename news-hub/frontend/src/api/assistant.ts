@@ -221,8 +221,20 @@ export interface BatchIngestAllResult {
 
 // SSE event shape from backend
 export interface SSEEvent {
-  type: 'delta' | 'done' | 'error'
+  type: 'delta' | 'done' | 'error' | 'thread_id'
   content?: string
+  thread_id?: string
+}
+
+// --- Conversation Thread Management ---
+
+export interface ConversationThread {
+  thread_id: string
+  title: string
+  created_at: string
+  last_message_at: string
+  message_count: number
+  last_user_message: string
 }
 
 export const assistantApi = {
@@ -232,21 +244,31 @@ export const assistantApi = {
     onDelta: (text: string) => void,
     onDone: () => void,
     onError: (error: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: { threadId?: string; systemPrompt?: string; onThreadId?: (id: string) => void }
   ): Promise<void> {
     const token = localStorage.getItem('access_token')
-    const response = await fetch('/api/v1/assistant/chat-rag', {
+    const body: Record<string, any> = { messages, stream: true }
+    if (options?.threadId) body.thread_id = options.threadId
+    if (options?.systemPrompt) body.system_prompt = options.systemPrompt
+
+    const response = await fetch('/api/v1/assistant/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ messages, stream: true }),
+      body: JSON.stringify(body),
       signal,
     })
 
     if (!response.ok) {
-      onError(`HTTP ${response.status}`)
+      let errorDetail = `HTTP ${response.status}`
+      try {
+        const body = await response.text()
+        if (body) errorDetail += `: ${body.slice(0, 200)}`
+      } catch { /* ignore */ }
+      onError(errorDetail)
       return
     }
 
@@ -258,6 +280,7 @@ export const assistantApi = {
 
     const decoder = new TextDecoder()
     let buffer = ''
+    let gotDone = false
 
     while (true) {
       const { done, value } = await reader.read()
@@ -273,16 +296,29 @@ export const assistantApi = {
           const event: SSEEvent = JSON.parse(line.slice(6))
           if (event.type === 'delta' && event.content) {
             onDelta(event.content)
+          } else if (event.type === 'thread_id' && event.thread_id) {
+            options?.onThreadId?.(event.thread_id)
           } else if (event.type === 'done') {
+            gotDone = true
             onDone()
           } else if (event.type === 'error') {
             onError(event.content || 'Unknown error')
           }
-        } catch {
-          // skip non-JSON lines
+        } catch (e) {
+          console.warn('[chatStream] SSE parse error, line length:', line.length, e)
         }
       }
     }
+    // Handle remaining buffer (same as deepResearchStream)
+    if (buffer.startsWith('data: ')) {
+      try {
+        const event: SSEEvent = JSON.parse(buffer.slice(6))
+        if (event.type === 'delta' && event.content) onDelta(event.content)
+        else if (event.type === 'thread_id' && event.thread_id) options?.onThreadId?.(event.thread_id)
+        else if (event.type === 'done') { gotDone = true; onDone() }
+      } catch { /* skip */ }
+    }
+    if (!gotDone) onDone()
   },
 
   // Non-streaming chat fallback
@@ -423,6 +459,110 @@ export const assistantApi = {
         } catch { /* skip */ }
       }
     }
+  },
+
+  // --- Conversation Thread Management ---
+
+  async listConversations(page = 1, pageSize = 20): Promise<ApiResponse<{ threads: ConversationThread[]; total: number }>> {
+    const response = await apiClient.get<ApiResponse<{ threads: ConversationThread[]; total: number }>>(
+      '/assistant/conversations', { params: { page, page_size: pageSize } }
+    )
+    return response.data
+  },
+
+  async getConversation(threadId: string): Promise<ApiResponse<ConversationThread>> {
+    const response = await apiClient.get<ApiResponse<ConversationThread>>(
+      `/assistant/conversations/${threadId}`
+    )
+    return response.data
+  },
+
+  async updateConversation(threadId: string, title: string): Promise<ApiResponse<any>> {
+    const response = await apiClient.patch<ApiResponse<any>>(
+      `/assistant/conversations/${threadId}`, { title }
+    )
+    return response.data
+  },
+
+  async deleteConversation(threadId: string): Promise<ApiResponse<any>> {
+    const response = await apiClient.delete<ApiResponse<any>>(
+      `/assistant/conversations/${threadId}`
+    )
+    return response.data
+  },
+
+  // --- Deep Research Stream ---
+
+  async deepResearchStream(
+    query: string,
+    onDelta: (text: string) => void,
+    onDone: () => void,
+    onError: (error: string) => void,
+    signal?: AbortSignal,
+    systemPrompt?: string
+  ): Promise<void> {
+    const token = localStorage.getItem('access_token')
+    const body: Record<string, any> = { query, stream: true }
+    if (systemPrompt) body.system_prompt = systemPrompt
+
+    const response = await fetch('/api/v1/assistant/deep-research', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (!response.ok) {
+      let errorDetail = `HTTP ${response.status}`
+      try {
+        const body = await response.text()
+        if (body) errorDetail += `: ${body.slice(0, 200)}`
+      } catch { /* ignore */ }
+      onError(errorDetail)
+      return
+    }
+    const reader = response.body?.getReader()
+    if (!reader) {
+      onError('No response body')
+      return
+    }
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let gotDone = false
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event: SSEEvent = JSON.parse(line.slice(6))
+          if (event.type === 'delta' && event.content) {
+            onDelta(event.content)
+          } else if (event.type === 'done') {
+            gotDone = true
+            onDone()
+          } else if (event.type === 'error') {
+            onError(event.content || 'Unknown error')
+          }
+        } catch (e) {
+          console.warn('[deepResearch] SSE parse error, line length:', line.length, e)
+        }
+      }
+    }
+    // Handle remaining buffer and ensure onDone is called
+    if (buffer.startsWith('data: ')) {
+      try {
+        const event: SSEEvent = JSON.parse(buffer.slice(6))
+        if (event.type === 'delta' && event.content) onDelta(event.content)
+        else if (event.type === 'done') { gotDone = true; onDone() }
+      } catch { /* skip */ }
+    }
+    if (!gotDone) onDone()
   },
 }
 

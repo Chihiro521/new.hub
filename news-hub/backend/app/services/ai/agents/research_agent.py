@@ -60,6 +60,95 @@ RESEARCH_SYSTEM_PROMPT = """你是 News Hub 的智能研究助手。
 """
 
 
+def _content_to_text(content: Any) -> str:
+    """Best-effort extraction of plain text from model content payloads."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [_content_to_text(item) for item in content]
+        return "".join(p for p in parts if p)
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            return text
+        if isinstance(text, dict):
+            nested = text.get("value") or text.get("text")
+            if isinstance(nested, str):
+                return nested
+        for key in ("output_text", "content", "value", "delta"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (list, dict)):
+                nested = _content_to_text(value)
+                if nested:
+                    return nested
+        return ""
+
+    text_attr = getattr(content, "text", None)
+    if isinstance(text_attr, str):
+        return text_attr
+    content_attr = getattr(content, "content", None)
+    if content_attr is not None and content_attr is not content:
+        return _content_to_text(content_attr)
+    # Final fallback: stringify non-empty objects
+    # Be conservative: only return if it looks like real text (not repr of objects)
+    fallback = str(content).strip()
+    if fallback and fallback not in ("None", "", "{}") and len(fallback) > 5 and not fallback.startswith(("AIMessage", "HumanMessage", "content=")):
+        return fallback
+    return ""
+
+
+def _event_output_to_text(output: Any) -> str:
+    """Extract text from `on_chat_model_end` output payload."""
+    direct = _content_to_text(output)
+    if direct:
+        return direct
+
+    generations = None
+    if isinstance(output, dict):
+        generations = output.get("generations")
+    else:
+        generations = getattr(output, "generations", None)
+
+    if not generations:
+        return ""
+
+    parts: List[str] = []
+    for group in generations:
+        candidates = group if isinstance(group, list) else [group]
+        for item in candidates:
+            if isinstance(item, dict):
+                message = item.get("message", item)
+            else:
+                message = getattr(item, "message", item)
+            text = _content_to_text(message)
+            if text:
+                parts.append(text)
+    return "".join(parts)
+
+
+def _reason_output_to_text(output: Any) -> str:
+    """Extract assistant text from reason-node output payload."""
+    if not output:
+        return ""
+    messages = None
+    if isinstance(output, dict):
+        messages = output.get("messages")
+    else:
+        messages = getattr(output, "messages", None)
+    if not messages:
+        return ""
+
+    # Usually the last message from reason node is the latest AIMessage.
+    last = messages[-1]
+    if isinstance(last, dict):
+        return _content_to_text(last.get("content"))
+    return _content_to_text(getattr(last, "content", None))
+
+
 class ResearchAgent:
     """LangGraph-based research agent with tool calling."""
 
@@ -159,6 +248,8 @@ class ResearchAgent:
         config = {"configurable": {"thread_id": thread_id or user_id}}
         collected_text = []
         tool_calls_made = []
+        streamed_any_text = False
+        final_reason_text = ""
 
         try:
             async for event in graph.astream_events(
@@ -169,15 +260,55 @@ class ResearchAgent:
                 # Stream LLM tokens
                 if kind == "on_chat_model_stream":
                     chunk = event["data"]["chunk"]
-                    if hasattr(chunk, "content") and isinstance(chunk.content, str) and chunk.content:
-                        collected_text.append(chunk.content)
-                        yield chunk.content
+                    chunk_text = _content_to_text(getattr(chunk, "content", None))
+                    # Fallback: some providers put text directly on chunk.text
+                    if not chunk_text:
+                        chunk_text = getattr(chunk, "text", None) or ""
+                    if chunk_text:
+                        streamed_any_text = True
+                        collected_text.append(chunk_text)
+                        yield chunk_text
+
+                # Fallback for providers returning non-string stream chunks
+                elif kind == "on_chat_model_end" and not streamed_any_text:
+                    output = event.get("data", {}).get("output")
+                    final_text = _event_output_to_text(output)
+                    if final_text:
+                        streamed_any_text = True
+                        collected_text.append(final_text)
+                        yield final_text
+
+                # Final fallback path for providers that only emit chain end output
+                elif kind == "on_chain_end" and event.get("name") == "reason":
+                    reason_text = _reason_output_to_text(event.get("data", {}).get("output"))
+                    if reason_text:
+                        final_reason_text = reason_text
 
                 # Track tool calls for audit
                 elif kind == "on_tool_start":
                     tool_name = event.get("name", "unknown")
                     tool_calls_made.append(tool_name)
                     yield f"\n[🔍 {tool_name}...]\n"
+
+            if not streamed_any_text and final_reason_text:
+                collected_text.append(final_reason_text)
+                yield final_reason_text
+
+            # Diagnostic: if nothing was emitted at all, yield a message so caller knows
+            if not streamed_any_text and not final_reason_text:
+                logger.warning(
+                    "research_agent produced no text user_id={} thread_id={} tool_calls={}",
+                    user_id, thread_id or user_id, len(tool_calls_made),
+                )
+
+            logger.info(
+                "research_agent_summary user_id={} thread_id={} chars={} tool_calls={} streamed_any_text={}",
+                user_id,
+                thread_id or user_id,
+                len("".join(collected_text)),
+                len(tool_calls_made),
+                streamed_any_text,
+            )
 
             await self.audit.log(
                 user_id=user_id,
@@ -200,4 +331,3 @@ class ResearchAgent:
                 latency_ms=int((time.monotonic() - t0) * 1000),
                 error=str(e),
             )
-
