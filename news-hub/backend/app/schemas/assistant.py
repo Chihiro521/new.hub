@@ -33,6 +33,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="对话线程ID。不传则创建新对话，传入则继续已有对话。",
     )
+    use_agent: bool = Field(
+        default=False,
+        description="启用工具调用模式（搜索、抓取等）。默认关闭，使用纯对话模式。",
+    )
 
 
 class SummarizeRequest(BaseModel):

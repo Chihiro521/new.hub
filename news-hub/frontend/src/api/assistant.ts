@@ -245,12 +245,13 @@ export const assistantApi = {
     onDone: () => void,
     onError: (error: string) => void,
     signal?: AbortSignal,
-    options?: { threadId?: string; systemPrompt?: string; onThreadId?: (id: string) => void }
+    options?: { threadId?: string; systemPrompt?: string; onThreadId?: (id: string) => void; useAgent?: boolean }
   ): Promise<void> {
     const token = localStorage.getItem('access_token')
     const body: Record<string, any> = { messages, stream: true }
     if (options?.threadId) body.thread_id = options.threadId
     if (options?.systemPrompt) body.system_prompt = options.systemPrompt
+    if (options?.useAgent) body.use_agent = true
 
     const response = await fetch('/api/v1/assistant/chat', {
       method: 'POST',
@@ -281,6 +282,8 @@ export const assistantApi = {
     const decoder = new TextDecoder()
     let buffer = ''
     let gotDone = false
+    let gotError = false
+    let gotDelta = false
 
     while (true) {
       const { done, value } = await reader.read()
@@ -295,6 +298,7 @@ export const assistantApi = {
         try {
           const event: SSEEvent = JSON.parse(line.slice(6))
           if (event.type === 'delta' && event.content) {
+            gotDelta = true
             onDelta(event.content)
           } else if (event.type === 'thread_id' && event.thread_id) {
             options?.onThreadId?.(event.thread_id)
@@ -302,6 +306,7 @@ export const assistantApi = {
             gotDone = true
             onDone()
           } else if (event.type === 'error') {
+            gotError = true
             onError(event.content || 'Unknown error')
           }
         } catch (e) {
@@ -313,12 +318,24 @@ export const assistantApi = {
     if (buffer.startsWith('data: ')) {
       try {
         const event: SSEEvent = JSON.parse(buffer.slice(6))
-        if (event.type === 'delta' && event.content) onDelta(event.content)
+        if (event.type === 'delta' && event.content) {
+          gotDelta = true
+          onDelta(event.content)
+        }
         else if (event.type === 'thread_id' && event.thread_id) options?.onThreadId?.(event.thread_id)
         else if (event.type === 'done') { gotDone = true; onDone() }
+        else if (event.type === 'error') { gotError = true; onError(event.content || 'Unknown error') }
       } catch { /* skip */ }
     }
-    if (!gotDone) onDone()
+
+    if (!gotDone && !gotError) {
+      if (signal?.aborted) return
+      if (gotDelta) {
+        onDone()
+      } else {
+        onError('流式响应异常中断，未收到模型内容')
+      }
+    }
   },
 
   // Non-streaming chat fallback
@@ -531,6 +548,8 @@ export const assistantApi = {
     const decoder = new TextDecoder()
     let buffer = ''
     let gotDone = false
+    let gotError = false
+    let gotDelta = false
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -542,11 +561,13 @@ export const assistantApi = {
         try {
           const event: SSEEvent = JSON.parse(line.slice(6))
           if (event.type === 'delta' && event.content) {
+            gotDelta = true
             onDelta(event.content)
           } else if (event.type === 'done') {
             gotDone = true
             onDone()
           } else if (event.type === 'error') {
+            gotError = true
             onError(event.content || 'Unknown error')
           }
         } catch (e) {
@@ -558,11 +579,19 @@ export const assistantApi = {
     if (buffer.startsWith('data: ')) {
       try {
         const event: SSEEvent = JSON.parse(buffer.slice(6))
-        if (event.type === 'delta' && event.content) onDelta(event.content)
+        if (event.type === 'delta' && event.content) {
+          gotDelta = true
+          onDelta(event.content)
+        }
         else if (event.type === 'done') { gotDone = true; onDone() }
+        else if (event.type === 'error') { gotError = true; onError(event.content || 'Unknown error') }
       } catch { /* skip */ }
     }
-    if (!gotDone) onDone()
+    if (!gotDone && !gotError) {
+      if (signal?.aborted) return
+      if (gotDelta) onDone()
+      else onError('研究流响应异常中断，未收到内容')
+    }
   },
 }
 

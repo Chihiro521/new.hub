@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import ChatFairy from '@/components/ChatFairy.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -43,6 +44,9 @@ function handleLogout() {
 
     <!-- Page Content -->
     <RouterView />
+
+    <!-- AI Chat Fairy -->
+    <ChatFairy />
   </div>
 </template>
 

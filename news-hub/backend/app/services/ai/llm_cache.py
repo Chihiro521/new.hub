@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
 from langchain_core.caches import BaseCache
-from langchain_core.outputs import Generation
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, Generation
 from loguru import logger
 
 from app.core.config import settings
@@ -52,14 +53,28 @@ class MongoDBLLMCache(BaseCache):
                     {"_id": doc["_id"]}, {"$inc": {"hit_count": 1}}
                 )
                 logger.debug(f"LLM cache HIT: {key[:12]}... (hits: {doc.get('hit_count', 0) + 1})")
-                return [Generation(text=doc["response"])]
+                text = str(doc.get("response", "") or "")
+                if not text:
+                    return None
+                return [ChatGeneration(message=AIMessage(content=text))]
         except Exception as e:
             logger.warning(f"LLM cache lookup failed: {e}")
         return None
 
     async def aupdate(self, prompt: str, llm_string: str, return_val: Sequence[Generation]) -> None:
         key = self._hash_key(prompt, llm_string)
-        text = return_val[0].text if return_val else ""
+        text = ""
+        if return_val:
+            first = return_val[0]
+            # Chat models usually return ChatGeneration(message=AIMessage(...))
+            message = getattr(first, "message", None)
+            content = getattr(message, "content", None)
+            if isinstance(content, str):
+                text = content
+            elif content is not None:
+                text = str(content)
+            if not text:
+                text = getattr(first, "text", "") or ""
         if not text:
             return
         try:

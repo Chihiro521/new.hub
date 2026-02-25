@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from contextlib import suppress
 from datetime import datetime
 from typing import AsyncGenerator, List, Optional
 
@@ -77,16 +78,23 @@ async def chat_with_assistant(
     request: ChatRequest,
     current_user: UserInDB = Depends(get_current_user),
 ):
-    """Chat with AI assistant, with SSE streaming by default."""
+    """Chat with AI assistant, with SSE streaming by default.
+
+    When use_agent=False (default), uses direct LLM streaming for fast, reliable chat.
+    When use_agent=True, uses LangGraph ResearchAgent with tool calling.
+    """
     service = AssistantService()
     messages: List[dict] = [m.model_dump() for m in request.messages]
+
+    # Pick the right chat method based on use_agent flag
+    chat_method = service.chat_with_agent if request.use_agent else service.chat
 
     if not request.stream:
         chunks = []
         thread_id = None
         chunk_count = 0
         chunk_chars = 0
-        async for chunk in service.chat(
+        async for chunk in chat_method(
             messages=messages, user_id=current_user.id,
             system_prompt=request.system_prompt,
             thread_id=request.thread_id,
@@ -99,12 +107,13 @@ async def chat_with_assistant(
             chunk_chars += len(chunk)
         reply = "".join(chunks)
         logger.info(
-            "chat_summary stream=False user_id={} thread_id={} chunks={} chars={} empty_reply={}",
+            "chat_summary stream=False user_id={} thread_id={} chunks={} chars={} empty_reply={} agent={}",
             current_user.id,
             thread_id or request.thread_id or "",
             chunk_count,
             chunk_chars,
             not bool(reply.strip()),
+            request.use_agent,
         )
         return success_response(data=ChatResponseData(reply=reply))
 
@@ -113,12 +122,16 @@ async def chat_with_assistant(
         delta_count = 0
         delta_chars = 0
         error_msg: Optional[str] = None
+        stream_cancelled = False
+        done_sent = False
+        stream = chat_method(
+            messages=messages,
+            user_id=current_user.id,
+            system_prompt=request.system_prompt,
+            thread_id=request.thread_id,
+        )
         try:
-            async for delta in service.chat(
-                messages=messages, user_id=current_user.id,
-                system_prompt=request.system_prompt,
-                thread_id=request.thread_id,
-            ):
+            async for delta in stream:
                 if delta.startswith("__thread_id__:"):
                     tid = delta.split(":", 1)[1]
                     thread_id = tid
@@ -129,20 +142,36 @@ async def chat_with_assistant(
                 delta_count += 1
                 delta_chars += len(delta)
                 yield f"data: {payload}\n\n"
+            done_sent = True
             yield 'data: {"type": "done"}\n\n'
+        except asyncio.CancelledError:
+            stream_cancelled = True
+            error_msg = "stream_cancelled"
+            raise
         except Exception as e:
             error_msg = str(e)
             error_payload = json.dumps({"type": "error", "content": str(e)})
             yield f"data: {error_payload}\n\n"
+        except BaseException as e:  # pragma: no cover - defensive guard
+            error_msg = f"{type(e).__name__}: {e}"
+            if isinstance(e, (GeneratorExit, KeyboardInterrupt, SystemExit)):
+                raise
+            error_payload = json.dumps({"type": "error", "content": error_msg})
+            yield f"data: {error_payload}\n\n"
         finally:
+            with suppress(Exception):
+                await stream.aclose()
             logger.info(
-                "chat_summary stream=True user_id={} thread_id={} deltas={} chars={} empty_reply={} error={}",
+                "chat_summary stream=True user_id={} thread_id={} deltas={} chars={} empty_reply={} agent={} error={} cancelled={} done_sent={}",
                 current_user.id,
                 thread_id,
                 delta_count,
                 delta_chars,
                 delta_chars == 0,
+                request.use_agent,
                 error_msg or "",
+                stream_cancelled,
+                done_sent,
             )
 
     return StreamingResponse(

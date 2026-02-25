@@ -107,6 +107,19 @@ def _event_output_to_text(output: Any) -> str:
     if direct:
         return direct
 
+    # Try reasoning_content for reasoning models (o1/o3/gpt-5.x)
+    if not isinstance(output, (str, type(None))):
+        for attr in ("reasoning_content", "reasoning"):
+            rc = None
+            if isinstance(output, dict):
+                rc = output.get(attr)
+            else:
+                rc = getattr(output, attr, None)
+            if rc:
+                text = _content_to_text(rc)
+                if text:
+                    return text
+
     generations = None
     if isinstance(output, dict):
         generations = output.get("generations")
@@ -125,6 +138,14 @@ def _event_output_to_text(output: Any) -> str:
             else:
                 message = getattr(item, "message", item)
             text = _content_to_text(message)
+            if not text:
+                # Also check reasoning_content on the message
+                for attr in ("reasoning_content", "reasoning"):
+                    rc = message.get(attr) if isinstance(message, dict) else getattr(message, attr, None)
+                    if rc:
+                        text = _content_to_text(rc)
+                        if text:
+                            break
             if text:
                 parts.append(text)
     return "".join(parts)
@@ -261,6 +282,11 @@ class ResearchAgent:
                 if kind == "on_chat_model_stream":
                     chunk = event["data"]["chunk"]
                     chunk_text = _content_to_text(getattr(chunk, "content", None))
+                    # Reasoning models (o1/o3/gpt-5.x) may use reasoning_content
+                    if not chunk_text:
+                        chunk_text = _content_to_text(getattr(chunk, "reasoning_content", None))
+                    if not chunk_text:
+                        chunk_text = _content_to_text(getattr(chunk, "reasoning", None))
                     # Fallback: some providers put text directly on chunk.text
                     if not chunk_text:
                         chunk_text = getattr(chunk, "text", None) or ""

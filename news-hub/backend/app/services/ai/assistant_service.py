@@ -23,6 +23,7 @@ from app.schemas.assistant import (
     SourceSuggestion,
     SummarizeResponseData,
 )
+from app.services.ai.agents.research_agent import _content_to_text
 from app.services.ai.audit import AuditLogger
 from app.services.ai.ingestion_service import ExternalIngestionService
 from app.services.ai.llm_client import get_llm_client
@@ -56,31 +57,19 @@ class AssistantService:
             return False
         return True
 
-    async def chat(
-        self, messages: List[dict], user_id: str,
-        system_prompt: Optional[str] = None,
-        thread_id: Optional[str] = None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream assistant chat response chunks via LangGraph agent.
-
-        If thread_id is None, creates a new conversation thread.
-        If thread_id is provided, resumes the existing conversation.
-        Yields the thread_id as the first chunk (prefixed with __thread_id__:).
-        """
-        from app.services.ai.agents.research_agent import ResearchAgent
-
-        # Resolve or create thread
+    async def _resolve_or_create_thread(
+        self, messages: List[dict], user_id: str, thread_id: Optional[str],
+    ) -> str:
+        """Resolve an existing thread or create a new one. Returns thread_id."""
         if thread_id:
-            # Verify ownership
             doc = await mongodb.conversation_threads.find_one(
                 {"thread_id": thread_id, "user_id": user_id, "is_archived": {"$ne": True}}
             )
             if not doc:
-                thread_id = None  # Fall through to create new
+                thread_id = None
 
         if not thread_id:
             thread_id = str(uuid.uuid4())
-            # Auto-generate title from first user message
             first_msg = ""
             for m in messages:
                 if m.get("role") == "user":
@@ -98,7 +87,6 @@ class AssistantService:
                 "is_archived": False,
             })
         else:
-            # Update existing thread metadata
             last_msg = ""
             for m in reversed(messages):
                 if m.get("role") == "user":
@@ -111,8 +99,115 @@ class AssistantService:
                     "last_user_message": last_msg[:200],
                 }, "$inc": {"message_count": 1}},
             )
+        return thread_id
 
-        # Emit thread_id as first chunk so frontend knows which thread
+    async def chat(
+        self, messages: List[dict], user_id: str,
+        system_prompt: Optional[str] = None,
+        thread_id: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream assistant chat response via direct LLM streaming.
+
+        Uses AsyncOpenAI streaming directly — no LangGraph, no tools.
+        Fast and reliable for normal conversations.
+        """
+        thread_id = await self._resolve_or_create_thread(messages, user_id, thread_id)
+        yield f"__thread_id__:{thread_id}"
+
+        if self.client is None:
+            yield "AI 助手暂不可用，请先配置 OPENAI_API_KEY。"
+            return
+
+        t0 = time.monotonic()
+        prompt = (system_prompt or SYSTEM_CHAT).strip()
+        payload: List[Dict[str, str]] = []
+        if prompt:
+            payload.append({"role": "system", "content": prompt})
+        for msg in messages[-30:]:
+            role = str(msg.get("role", "user"))
+            if role not in {"user", "assistant", "system"}:
+                continue
+            content = str(msg.get("content", "")).strip()
+            if not content:
+                continue
+            payload.append({"role": role, "content": content})
+
+        if not payload:
+            yield "（消息为空）"
+            return
+
+        collected = []
+        try:
+            stream = await self.client.chat.completions.create(
+                model=settings.openai_model,
+                messages=payload,
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
+                # Use robust extraction that handles str / list / dict / nested objects
+                text = _content_to_text(getattr(delta, "content", None))
+                if not text:
+                    text = _content_to_text(getattr(delta, "reasoning_content", None))
+                if not text:
+                    text = _content_to_text(getattr(delta, "reasoning", None))
+                if not text:
+                    text = getattr(delta, "text", None) or ""
+                if text:
+                    collected.append(text)
+                    yield text
+        except Exception as e:
+            logger.error(f"Chat streaming failed: {e}")
+            yield f"\n\n抱歉，发生错误：{e}"
+
+        # Fallback: if streaming yielded nothing, try a non-streaming call
+        if not collected:
+            logger.warning("Chat stream produced no text, falling back to non-streaming call")
+            try:
+                resp = await self.client.chat.completions.create(
+                    model=settings.openai_model,
+                    messages=payload,
+                    stream=False,
+                )
+                choice = resp.choices[0] if resp.choices else None
+                if choice and choice.message:
+                    fallback = _content_to_text(getattr(choice.message, "content", None))
+                    if not fallback:
+                        fallback = _content_to_text(getattr(choice.message, "reasoning_content", None))
+                    if not fallback:
+                        fallback = _content_to_text(getattr(choice.message, "reasoning", None))
+                    if fallback:
+                        collected.append(fallback)
+                        yield fallback
+            except Exception as e2:
+                logger.error(f"Chat non-streaming fallback also failed: {e2}")
+
+        if not collected:
+            yield "（模型未返回正文，请稍后重试）"
+
+        await self.audit.log(
+            user_id=user_id,
+            action="chat",
+            input_summary=messages[-1].get("content", "")[:200] if messages else "",
+            output_summary="".join(collected)[:200],
+            model=settings.openai_model,
+            latency_ms=int((time.monotonic() - t0) * 1000),
+        )
+
+    async def chat_with_agent(
+        self, messages: List[dict], user_id: str,
+        system_prompt: Optional[str] = None,
+        thread_id: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream assistant chat via LangGraph ResearchAgent (with tools).
+
+        Use this when the user needs tool access (search, scrape, etc.).
+        """
+        from app.services.ai.agents.research_agent import ResearchAgent
+
+        thread_id = await self._resolve_or_create_thread(messages, user_id, thread_id)
         yield f"__thread_id__:{thread_id}"
 
         agent = ResearchAgent()

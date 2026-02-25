@@ -41,6 +41,11 @@ htmlcov/
 .tox/
 .nox/
 
+# Local test scripts/artifacts (backend root)
+backend/test_*.py
+backend/test_*.json
+backend/test_*.txt
+
 # Logs
 *.log
 logs/

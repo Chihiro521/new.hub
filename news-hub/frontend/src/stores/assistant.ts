@@ -10,6 +10,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const abortController = ref<AbortController | null>(null)
+  const activeStreamToken = ref(0)
 
   // Conversation state
   const currentThreadId = ref<string | null>(null)
@@ -17,7 +18,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   const conversationsTotal = ref(0)
 
   // UI state
-  const chatMode = ref<'chat' | 'research'>('chat')
+  const chatMode = ref<'chat' | 'agent' | 'research'>('chat')
   const fairyOpen = ref(false)
   const sidebarOpen = ref(false)
 
@@ -43,114 +44,167 @@ export const useAssistantStore = defineStore('assistant', () => {
     return trimmed
   }
 
-  function ensureChatReply(content: string): string {
+  function ensureChatReply(content: string): string | null {
     const trimmed = content.trim()
     if (trimmed) return trimmed
-    return '（未收到模型正文输出，请稍后重试）'
+    return null
   }
 
   // --- Chat Actions ---
 
-  async function sendMessage(content: string) {
+  async function sendMessage(content: string, useAgent = false) {
+    if (abortController.value && !abortController.value.signal.aborted) {
+      abortController.value.abort()
+    }
+
+    const streamToken = activeStreamToken.value + 1
+    activeStreamToken.value = streamToken
+
+    const controller = new AbortController()
+    abortController.value = controller
+
     messages.value.push({ role: 'user', content })
     loading.value = true
     error.value = null
     isStreaming.value = true
     streamingContent.value = ''
-    abortController.value = new AbortController()
+
+    const isCurrentStream = () => activeStreamToken.value === streamToken
 
     try {
       await assistantApi.chatStream(
         messages.value,
         (delta) => {
+          if (!isCurrentStream()) return
           loading.value = false
           streamingContent.value += delta
         },
         () => {
+          if (!isCurrentStream()) return
           const finalContent = ensureChatReply(streamingContent.value)
-          messages.value.push({ role: 'assistant', content: finalContent })
+          if (finalContent) {
+            messages.value.push({ role: 'assistant', content: finalContent })
+          } else {
+            error.value = '模型未返回内容，请稍后重试'
+          }
           streamingContent.value = ''
           isStreaming.value = false
           loading.value = false
-          abortController.value = null
+          if (abortController.value === controller) {
+            abortController.value = null
+          }
           loadConversations()
         },
         (err) => {
+          if (!isCurrentStream()) return
           error.value = err
           isStreaming.value = false
           loading.value = false
-          abortController.value = null
+          if (abortController.value === controller) {
+            abortController.value = null
+          }
         },
-        abortController.value.signal,
+        controller.signal,
         {
           threadId: currentThreadId.value || undefined,
-          onThreadId: (id) => { currentThreadId.value = id },
+          onThreadId: (id) => {
+            if (!isCurrentStream()) return
+            currentThreadId.value = id
+          },
+          useAgent,
         }
       )
     } catch (err: unknown) {
+      if (!isCurrentStream()) return
+      const isAbortError = err instanceof DOMException && err.name === 'AbortError'
       let message = 'Failed to send message'
       if (err instanceof TypeError && (err.message.includes('fetch') || err.message.includes('network'))) {
         message = '网络连接失败，请检查网络后重试'
       } else if (err instanceof Error) {
         message = err.message.startsWith('HTTP') ? `服务器错误: ${err.message}` : err.message
       }
-      if (abortController.value && !abortController.value.signal.aborted) {
+      if (!isAbortError && !controller.signal.aborted) {
         error.value = message
       }
       isStreaming.value = false
       loading.value = false
-      abortController.value = null
+      if (abortController.value === controller) {
+        abortController.value = null
+      }
     }
   }
 
   async function sendDeepResearch(query: string) {
+    if (abortController.value && !abortController.value.signal.aborted) {
+      abortController.value.abort()
+    }
+
+    const streamToken = activeStreamToken.value + 1
+    activeStreamToken.value = streamToken
+
+    const controller = new AbortController()
+    abortController.value = controller
+
     messages.value.push({ role: 'user', content: `[深度研究] ${query}` })
     loading.value = true
     error.value = null
     isStreaming.value = true
     streamingContent.value = ''
-    abortController.value = new AbortController()
+
+    const isCurrentStream = () => activeStreamToken.value === streamToken
 
     try {
       await assistantApi.deepResearchStream(
         query,
         (delta) => {
+          if (!isCurrentStream()) return
           loading.value = false
           streamingContent.value += delta
         },
         () => {
+          if (!isCurrentStream()) return
           const finalContent = ensureDeepResearchReport(streamingContent.value)
           messages.value.push({ role: 'assistant', content: finalContent })
           streamingContent.value = ''
           isStreaming.value = false
           loading.value = false
-          abortController.value = null
+          if (abortController.value === controller) {
+            abortController.value = null
+          }
         },
         (err) => {
+          if (!isCurrentStream()) return
           error.value = err
           isStreaming.value = false
           loading.value = false
-          abortController.value = null
+          if (abortController.value === controller) {
+            abortController.value = null
+          }
         },
-        abortController.value.signal
+        controller.signal
       )
     } catch (err: unknown) {
+      if (!isCurrentStream()) return
+      const isAbortError = err instanceof DOMException && err.name === 'AbortError'
       let message = 'Research failed'
       if (err instanceof TypeError && (err.message.includes('fetch') || err.message.includes('network'))) {
         message = '网络连接失败，请检查网络后重试'
       } else if (err instanceof Error) {
         message = err.message.startsWith('HTTP') ? `服务器错误: ${err.message}` : err.message
       }
-      if (abortController.value && !abortController.value.signal.aborted) {
+      if (!isAbortError && !controller.signal.aborted) {
         error.value = message
       }
       isStreaming.value = false
       loading.value = false
-      abortController.value = null
+      if (abortController.value === controller) {
+        abortController.value = null
+      }
     }
   }
 
   function stopStreaming() {
+    activeStreamToken.value += 1
     if (abortController.value) {
       abortController.value.abort()
       abortController.value = null
@@ -168,7 +222,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   async function loadConversations() {
     try {
       const res = await assistantApi.listConversations()
-      if (res.success && res.data) {
+      if (res.code === 200 && res.data) {
         conversations.value = res.data.threads
         conversationsTotal.value = res.data.total
       }
